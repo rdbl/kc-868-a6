@@ -1,7 +1,7 @@
 /************************************
  *           INCLUSIONS
  ************************************/
-#include <WiFiManager.h> // Bibliothèque pour WiFiManager
+#include <WiFiManager.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <ESPmDNS.h>
@@ -9,7 +9,7 @@
 #include <ArduinoOTA.h>
 
 #include <Wire.h>
-#include <U8g2lib.h>
+#include <U8G2lib.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include "PCF8574.h"
@@ -43,7 +43,6 @@ DallasTemperature sensors2(&oneWire2);
  *   CONFIGURATION PCF8574
  ************************************/
 TwoWire I2Cone = TwoWire(0);
-PCF8574 pcf8574_I1(&I2Cone, 0x22, 4, 15);
 PCF8574 pcf8574_R1(&I2Cone, 0x24, 4, 15);
 
 #define RELAY1_PIN P0 // Relais 1 contrôlé par la broche P0 du PCF8574
@@ -57,7 +56,6 @@ float differentialThreshold = 2.0;
 unsigned long lastRelayChangeTime = 0;
 unsigned long relayDelay = 60000; // Temporisation de 1 minute (en ms)
 bool isCountdownActive = false;
-int countdown = 0;
 bool relayStates[NUM_RELAYS] = {false, false, false, false, false, false};
 
 const char *myTopic = "Chauffage/bouilleur"; // Ton topic MQTT que tu veux utiliser
@@ -104,223 +102,90 @@ void setupOTA()
 /************************************
  *  FONCTION : displayInfos
  ************************************/
-void displayInfos(unsigned long currentTime, float temp1, float temp2, float tempDifference, bool relayStates[], int countdown)
+void displayInfos(float temp1, float temp2, float tempDifference, bool relayState, int countdown)
 {
-  // Affichage sur le port série pour debug
-  Serial.print("Sonde 1: ");
-  Serial.print(temp1);
-  Serial.println(" °C [Bleu]");
+  if(!isCountdownActive) countdown = 0;
+  // Debug sur le port série
+  Serial.printf("Temp S1: %.2f°C | Temp S2: %.2f°C | Diff: %.2f°C\n", temp1, temp2, tempDifference);
+  Serial.printf("Relay State: %s | Countdown: %d s\n", relayState ? "ON" : "OFF", countdown);
 
-  Serial.print("Sonde 2: ");
-  Serial.print(temp2);
-  Serial.println(" °C [Blanc]");
-
-  Serial.print("Différentiel: ");
-  Serial.print(tempDifference);
-  Serial.println(" °C");
-
-  Serial.print("Relais 1: ");
-  Serial.println(relayStates[0] ? "ON" : "OFF");
-
-  Serial.print("Temporisation: ");
-  Serial.print(countdown);
-  Serial.println(" s");
-
-  // Alternance du point clignotant
-  isDotVisible = !isDotVisible;
-
-  // Affichage sur l'écran OLED
+  // Affichage OLED
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_ncenB08_tr);
 
-  // Affichage réorganisé
-  int y = 10; // Ligne de départ
-  char tempDisplay1[32];
-  snprintf(tempDisplay1, sizeof(tempDisplay1), "S1: %.2f C [%s]", temp1,
-           (temp1 != DEVICE_DISCONNECTED_C) ? "Bleu" : "Erreur");
-  u8g2.drawStr(0, y, tempDisplay1);
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "S1: %.2f°C", temp1);
+  u8g2.drawStr(0, 10, buffer);
 
-  y = 22;
-  char tempDisplay2[32];
-  snprintf(tempDisplay2, sizeof(tempDisplay2), "S2: %.2f C [%s]", temp2,
-           (temp2 != DEVICE_DISCONNECTED_C) ? "Blanc" : "Erreur");
-  u8g2.drawStr(0, y, tempDisplay2);
+  snprintf(buffer, sizeof(buffer), "S2: %.2f°C", temp2);
+  u8g2.drawStr(0, 22, buffer);
 
-  y = 34;
-  char diffDisplay[32];
-  snprintf(diffDisplay, sizeof(diffDisplay), "Diff: %.2f C", tempDifference);
-  u8g2.drawStr(0, y, diffDisplay);
+  snprintf(buffer, sizeof(buffer), "Diff: %.2f°C", tempDifference);
+  u8g2.drawStr(0, 34, buffer);
 
-  y = 46;
-  char relayDisplay[32];
-  snprintf(relayDisplay, sizeof(relayDisplay), "Relais 1: %s", relayStates[0] ? "ON" : "OFF");
-  u8g2.drawStr(0, y, relayDisplay);
+  snprintf(buffer, sizeof(buffer), "Relay: %s", relayState ? "ON" : "OFF");
+  u8g2.drawStr(0, 46, buffer);
 
   if (isCountdownActive)
   {
-    y = 58;
-    char countdownDisplay[32];
-    snprintf(countdownDisplay, sizeof(countdownDisplay), "Tempo: %lus", countdown);
-    u8g2.drawStr(0, y, countdownDisplay);
+    snprintf(buffer, sizeof(buffer), "Tempo: %d s", countdown);
+    u8g2.drawStr(0, 58, buffer);
   }
 
-  // Affichage du point clignotant
+  // Point clignotant
   if (isDotVisible)
   {
-    u8g2.drawStr(120, 58, "."); // Point à droite de la dernière ligne
+    u8g2.drawStr(120, 58, ".");
   }
+  isDotVisible = !isDotVisible;
 
   u8g2.sendBuffer();
 }
 
 /************************************
- *           SETUP
+ *  LOGIQUE AUTOMATIQUE DE LA POMPE
  ************************************/
-void setup()
+void handleAutomaticMode(float tempDifference)
 {
-  // Initialisation du Serial pour debug
-  Serial.begin(9600);
-  delay(1000);
-
-  // -- Étape 1 : WiFi Manager --
-  // Création de l'objet WiFiManager
-  WiFiManager wifiManager;
-
-  // Si tu veux nettoyer l'ancienne config, décommente la ligne ci-dessous :
-  // wifiManager.resetSettings();
-
-  // Lance la config automatique :
-  //  - Si l'ESP32 n'a pas de réseau sauvegardé, il crée un AP nommé "AutoConnectAP"
-  //  - Sinon, il tente de se connecter aux identifiants déjà enregistrés
-  if (!wifiManager.autoConnect("AutoConnectAP", "12345678"))
-  {
-    Serial.println("Failed to connect, rebooting...");
-    delay(3000);
-    ESP.restart();
-  }
-
-  Serial.println("WiFi connected successfully!");
-  Serial.println(WiFi.localIP());
-
-  // -- Étape 2 : Config OTA --
-  setupOTA();
-
-  // Init MQTT, avec ton broker, user/pass
-  initMqtt("homeassistant.local", 1883, "romain", "2121Rom1");
-
-  // -- Étape 3 : Initialisation OLED --
-  u8g2.begin();
-
-  // -- Étape 4 : Initialisation des sondes DS18B20 --
-  sensors1.begin();
-  sensors2.begin();
-
-  // -- Étape 5 : Initialisation PCF8574 / Relais --
-  for (int i = 0; i < NUM_RELAYS; i++)
-  {
-    pcf8574_R1.pinMode(i, OUTPUT);
-  }
-  pcf8574_R1.begin();
-
-  // Met tous les relais sur HIGH (OFF)
-  for (int i = 0; i < NUM_RELAYS; i++)
-  {
-    pcf8574_R1.digitalWrite(i, HIGH);
-  }
-
-  // Petit message pour dire que le setup est fini
-  Serial.println("Setup completed!");
-}
-
-/************************************
- *           LOOP
- ************************************/
-void loop()
-{
-  // Gestion de l'OTA : à appeler en continu pour permettre l'update
-  ArduinoOTA.handle();
-
-  handleMqtt(); // Garde la connexion MQTT
-
-  // Récupération des températures des deux sondes
-  sensors1.requestTemperatures();
-  sensors2.requestTemperatures();
-
-  float temp1 = sensors1.getTempCByIndex(0);
-  float temp2 = sensors2.getTempCByIndex(0);
-
-  // Calcul du différentiel
-  float tempDifference = abs(temp1 - temp2);
-
-  // Gestion de l'état du relais avec temporisation
   unsigned long currentTime = millis();
 
-  // S'assure que le relais soit sur OFF avant toute logique
-  pcf8574_R1.digitalWrite(RELAY1_PIN, HIGH);
-
-  // Changement d'état si la temporisation n’est pas active
+  // Si la temporisation est terminée, on évalue l'état
   if (!isCountdownActive)
   {
-    // Si le différentiel est inférieur au seuil et le relais est actif (LOW)
-    if (tempDifference < differentialThreshold && relayStates[0])
+    if (tempDifference >= differentialThreshold && !relayStates[0])
     {
-      bool writeSuccess = pcf8574_R1.digitalWrite(RELAY1_PIN, HIGH);
-      if (writeSuccess)
-      {
-        Serial.println("Successfully set relay 0 to HIGH (OFF).");
-        relayStates[0] = false;
-        lastRelayChangeTime = currentTime;
-        isCountdownActive = true;
-      }
-      else
-      {
-        Serial.println("[ERROR] Failed to set relay 0 to HIGH (OFF).");
-        // Affiche une erreur sur l'écran OLED
-        u8g2.setFont(u8g2_font_ncenB08_tr);
-        u8g2.drawStr(0, 58, "Erreur relais 1");
-        u8g2.sendBuffer();
-      }
+      // Activer la pompe
+      pcf8574_R1.digitalWrite(RELAY1_PIN, LOW);
+      relayStates[0] = true;
+      lastRelayChangeTime = currentTime;
+      isCountdownActive = true;
+      Serial.println("[AUTO] Pompe activée.");
     }
-    // Si le différentiel est supérieur ou égal au seuil et le relais est inactif (HIGH)
-    else if (tempDifference >= differentialThreshold && !relayStates[0])
+    else if (tempDifference < differentialThreshold && relayStates[0])
     {
-      bool writeSuccess = pcf8574_R1.digitalWrite(RELAY1_PIN, LOW);
-      if (writeSuccess)
-      {
-        Serial.println("Successfully set relay 0 to LOW (ON).");
-        relayStates[0] = true;
-        lastRelayChangeTime = currentTime;
-        isCountdownActive = true;
-      }
-      else
-      {
-        Serial.println("[ERROR] Failed to set relay 0 to LOW (ON).");
-        u8g2.setFont(u8g2_font_ncenB08_tr);
-        u8g2.drawStr(0, 58, "Erreur relais 1");
-        u8g2.sendBuffer();
-      }
+      // Désactiver la pompe
+      pcf8574_R1.digitalWrite(RELAY1_PIN, HIGH);
+      relayStates[0] = false;
+      lastRelayChangeTime = currentTime;
+      isCountdownActive = true;
+      Serial.println("[AUTO] Pompe désactivée.");
     }
   }
 
-  // Mise à jour de la temporisation
+  // Gestion de la temporisation
   if (isCountdownActive && (currentTime - lastRelayChangeTime >= relayDelay))
   {
     isCountdownActive = false;
+    Serial.println("[AUTO] Temporisation terminée.");
   }
+}
 
-  if (isCountdownActive)
-  {
-    countdown = (relayDelay - (currentTime - lastRelayChangeTime)) / 1000;
-  }
-  else
-  {
-    countdown = 0;
-  }
-
-  // Affichage des données sur l'écran OLED
-  displayInfos(currentTime, temp1, temp2, tempDifference, relayStates, countdown);
-
-  // Construire le JSON
+/************************************
+ *  MISE À JOUR DU BROKER MQTT
+ ************************************/
+void updateMqttBroker(float temp1, float temp2)
+{
+ // Construire le JSON
   JsonDocument rliot;
   rliot["id"] = "device_001";
 
@@ -344,7 +209,6 @@ void loop()
 
     JsonObject sensor1Data = sensor1["data"].to<JsonObject>();
     sensor1Data["value"] = temp1;
-    sensor1Data["timestamp"] = currentTime;
 
     sensor1["error"] = nullptr; // ou un message si tu as un souci
   }
@@ -362,7 +226,6 @@ void loop()
 
     JsonObject sensor1Data = sensor1["data"].to<JsonObject>();
     sensor1Data["value"] = temp2;
-    sensor1Data["timestamp"] = currentTime;
 
     sensor1["error"] = nullptr; // ou un message si tu as un souci
   }
@@ -383,7 +246,84 @@ void loop()
 
   // Publier le JSON dans "myTopic"
   publishAllData(myTopic, rliot);
+}
 
-  // Petite pause
+/************************************
+ *           SETUP
+ ************************************/
+void setup()
+{
+  Serial.begin(9600);
+
+  // WiFi
+  WiFiManager wifiManager;
+  if (!wifiManager.autoConnect("AutoConnectAP"))
+  {
+    Serial.println("Failed to connect, rebooting...");
+    delay(3000);
+    ESP.restart();
+  }
+  Serial.println("WiFi connected successfully!");
+  Serial.println(WiFi.localIP());
+
+  setupOTA();
+
+  // -- Étape 3 : Initialisation OLED --
+  u8g2.begin();
+
+ // MQTT
+  initMqtt("homeassistant.local", 1883, "romain", "2121Rom1");
+
+  // Initialisation des capteurs et relais
+  sensors1.begin();
+  sensors2.begin();
+
+  // -- Étape 5 : Initialisation PCF8574 / Relais --
+  for (int i = 0; i < NUM_RELAYS; i++)
+  {
+    pcf8574_R1.pinMode(i, OUTPUT);
+  }
+  pcf8574_R1.begin();
+
+  // Met tous les relais sur HIGH (OFF)
+  for (int i = 0; i < NUM_RELAYS; i++)
+  {
+    pcf8574_R1.digitalWrite(i, HIGH);
+  }
+
+  // S'assure que le relais soit sur OFF avant toute logique
+  pcf8574_R1.digitalWrite(RELAY1_PIN, HIGH);
+
+  Serial.println("Setup completed!");
+ 
+}
+
+/************************************
+ *           LOOP
+ ************************************/
+void loop()
+{
+  ArduinoOTA.handle();
+  handleMqtt();
+
+  // Lecture des températures
+  sensors1.requestTemperatures();
+  sensors2.requestTemperatures();
+  float temp1 = sensors1.getTempCByIndex(0);
+  float temp2 = sensors2.getTempCByIndex(0);
+  float tempDifference = abs(temp1 - temp2);
+
+  // S'assure que le relais soit sur OFF avant toute logique
+  pcf8574_R1.digitalWrite(RELAY1_PIN, HIGH);
+
+  // Logique automatique
+  handleAutomaticMode(tempDifference);
+
+  // Mise à jour du broker MQTT
+  updateMqttBroker(temp1, temp2);
+
+  // Mise à jour de l'affichage
+  displayInfos(temp1, temp2, tempDifference, relayStates[0], (relayDelay - (millis() - lastRelayChangeTime)) / 1000);
+
   delay(1000);
 }
