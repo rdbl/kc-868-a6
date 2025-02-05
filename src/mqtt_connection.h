@@ -19,4 +19,11 @@ void handleMqtt();
  */
 bool publishAllData(const char* topic, const JsonDocument& doc);
 
+/**
+ * Permet de définir dynamiquement le callback MQTT.
+ * @param callback : Pointeur vers la fonction callback à utiliser
+ */
+void setMqttCallback(void (*callback)(char* topic, byte* payload, unsigned int length));
+
+
 #endif

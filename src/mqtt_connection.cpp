@@ -14,55 +14,74 @@ static const char* g_mqttPass = nullptr;
 
 // ===================================
 // Callback lorsque le MQTT reçoit un message
-// ===================================
-static void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("[MQTT] Message received on topic: ");
-  Serial.println(topic);
+// ===================================// Définir dynamiquement le callback
+static void (*customMqttCallback)(char* topic, byte* payload, unsigned int length) = nullptr;
 
-  String message;
-  for (unsigned int i = 0; i < length; i++) {
-    message += (char)payload[i];
-  }
-  Serial.print("[MQTT] Payload: ");
-  Serial.println(message);
+// Callback par défaut
+// Callback par défaut
+static void defaultMqttCallback(char* topic, byte* payload, unsigned int length) {
+    Serial.println("[MQTT] Default callback invoked.");
+    Serial.print("[MQTT] Topic: ");
+    Serial.println(topic);
+
+    // Construire le payload en tant que chaîne
+    String message;
+    for (unsigned int i = 0; i < length; i++) {
+        message += (char)payload[i];
+    }
+
+    Serial.print("[MQTT] Payload: ");
+    Serial.println(message);
 }
+
+void setMqttCallback(void (*callback)(char* topic, byte* payload, unsigned int length)) {
+    customMqttCallback = callback;
+}
+
 
 // ===================================
 // Connexion au broker
 // ===================================
 static void connectMqttBroker(const char* user, const char* pass) {
-  while (!mqttClient.connected()) {
-    Serial.print("[MQTT] Attempting MQTT connection...");
-    String clientId = "ESP32-";
-    clientId += String(random(0xffff), HEX);
+    while (!mqttClient.connected()) {
+        Serial.print("[MQTT] Attempting MQTT connection...");
+        String clientId = "ESP32-";
+        clientId += String(random(0xffff), HEX);
 
-    if (mqttClient.connect(clientId.c_str(), user, pass)) {
-      Serial.println(" connected!");
-      // S'abonner à un topic si besoin ici
-      // mqttClient.subscribe("some/topic");
-    } else {
-      Serial.print(" failed, rc=");
-      Serial.print(mqttClient.state());
-      Serial.println(" -> retry in 5 seconds");
-      delay(5000);
+        if (mqttClient.connect(clientId.c_str(), user, pass)) {
+            Serial.println(" connected!");
+
+            // Ajouter les abonnements nécessaires ici
+            mqttClient.subscribe("Chauffage/bouilleur/homeassistant/actuators/0/params/state");
+            mqttClient.subscribe("Chauffage/bouilleur/homeassistant/actuators/0/params/mode");
+            mqttClient.subscribe("Chauffage/bouilleur/homeassistant/actuators/0/params/diff_temp");
+
+            Serial.println("[MQTT] Subscribed to topics.");
+        } else {
+            Serial.print(" failed, rc=");
+            Serial.print(mqttClient.state());
+            Serial.println(" -> retry in 5 seconds");
+            delay(5000);
+        }
     }
-  }
 }
 
 // ===================================
 // Fonctions exposées
 // ===================================
 void initMqtt(const char* mqttBroker, int mqttPort, const char* mqttUser, const char* mqttPass) {
-  mqttClient.setServer(mqttBroker, mqttPort);
-  mqttClient.setCallback(mqttCallback);
+    mqttClient.setServer(mqttBroker, mqttPort);
 
-  // Sauvegarde pour la reconnexion
-  g_mqttUser = mqttUser;
-  g_mqttPass = mqttPass;
+    // Utiliser le callback utilisateur si défini, sinon utiliser le callback par défaut
+    mqttClient.setCallback(customMqttCallback ? customMqttCallback : defaultMqttCallback);
 
-  // Connexion initiale
-  connectMqttBroker(g_mqttUser, g_mqttPass);
-  mqttClient.setBufferSize(1024);
+    // Sauvegarde pour la reconnexion
+    g_mqttUser = mqttUser;
+    g_mqttPass = mqttPass;
+
+    // Connexion initiale
+    connectMqttBroker(g_mqttUser, g_mqttPass);
+    mqttClient.setBufferSize(1024);
 }
 
 void handleMqtt() {
