@@ -55,7 +55,7 @@ PCF8574 pcf8574_R1(&I2Cone, 0x24, 4, 15);
 bool isDotVisible = false;
 float differentialThreshold = 6.5;
 unsigned long lastRelayChangeTime = 0;
-unsigned long relayDelay = 60000; // Temporisation de 1 minute (en ms)
+unsigned long relayDelay = 60000 * 3 ; // Temporisation de 3 minute (en ms)
 bool isCountdownActive = false;
 bool relayStates[NUM_RELAYS] = {false, false, false, false, false, false};
 bool isAutoMode = true; // Mode manuel par défaut
