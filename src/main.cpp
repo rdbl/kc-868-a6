@@ -1,37 +1,26 @@
 /************************************
  *           INCLUSIONS
  ************************************/
-#include <WiFiManager.h>
-#include <WiFi.h>
-#include <WiFiClient.h>
-#include <ESPmDNS.h>
-#include <WiFiUdp.h>
-#include <ArduinoOTA.h>
+
 
 #include <Wire.h>
-#include <U8G2lib.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include "PCF8574.h"
 
-// Inclus le header MQTT
+
+#include "OTA_connection.h"
+#include "wifi_connection.h"
+#include "LoadConfig.h"
+#include "Display_connection.h"
 #include "mqtt_connection.h"
 
-/************************************
- *         CONFIGURATION OLED
- ************************************/
-U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(
-    U8G2_R2,      // Rotation
-    15,           // clock
-    4,            // data
-    U8X8_PIN_NONE // reset
-);
 
 /************************************
  *   CONFIGURATION DES 1-Wire
  ************************************/
-#define ONE_WIRE_BUS1 32 // GPIO pour la première sonde
-#define ONE_WIRE_BUS2 33 // GPIO pour la seconde sonde
+#define ONE_WIRE_BUS1 33 // GPIO pour la première sonde
+#define ONE_WIRE_BUS2 25 // GPIO pour la seconde sonde
 
 OneWire oneWire1(ONE_WIRE_BUS1);
 OneWire oneWire2(ONE_WIRE_BUS2);
@@ -52,106 +41,27 @@ PCF8574 pcf8574_R1(&I2Cone, 0x24, 4, 15);
 /************************************
  *   VARIABLES & CONSTANTES
  ************************************/
-bool isDotVisible = false;
-float differentialThreshold = 6.5;
-unsigned long lastRelayChangeTime = 0;
-unsigned long relayDelay = 60000 * 3 ; // Temporisation de 3 minute (en ms)
+DisplayConnection displayConnection;
+
+const bool SIMULATION_MODE = false; // Mode simulation pour les tests
+
 bool isCountdownActive = false;
+bool isAutoMode = false; // Mode manuel par défaut
+
+unsigned long lastRelayChangeTime = 0;
+
 bool relayStates[NUM_RELAYS] = {false, false, false, false, false, false};
-bool isAutoMode = true; // Mode manuel par défaut
-String relayCommand = "OFF"; // Commande relais initiale
+
+String relayCommand = "on"; // Commande relais initiale
+float differentialStartThreshold = 9; // Seuil de démarrage de la pompe
+float differentialStopThreshold = 3; // Seuil d'arrêt de la pompe
+int relayDelay = 30000; // Délai de temporisation de la pompe
+
  // Construire le JSON
 JsonDocument rliot;
-const char *myTopic = "Chauffage/bouilleur"; // Ton topic MQTT que tu veux utiliser
-
-/************************************
- *       FONCTION : setupOTA
- ************************************/
-void setupOTA()
-{
-  // Nom d’hôte du module (visible dans l’IDE Arduino lors de l’OTA)
-  ArduinoOTA.setHostname("regulation-bouilleur");
-
-  // Callbacks pour le debug
-  ArduinoOTA
-      .onStart([]()
-               {
-      String type;
-      if (ArduinoOTA.getCommand() == U_FLASH) {
-        type = "sketch";
-      } else { 
-        type = "filesystem";
-      }
-      Serial.println("Start updating " + type); })
-      .onEnd([]()
-             { Serial.println("\nEnd"); })
-      .onProgress([](unsigned int progress, unsigned int total)
-                  { Serial.printf("Progress: %u%%\r", (progress * 100) / total); })
-      .onError([](ota_error_t error)
-               {
-      Serial.printf("Error[%u]: ", error);
-      if (error == OTA_AUTH_ERROR)        Serial.println("Auth Failed");
-      else if (error == OTA_BEGIN_ERROR)  Serial.println("Begin Failed");
-      else if (error == OTA_CONNECT_ERROR)Serial.println("Connect Failed");
-      else if (error == OTA_RECEIVE_ERROR)Serial.println("Receive Failed");
-      else if (error == OTA_END_ERROR)    Serial.println("End Failed"); });
-
-  // Initialisation de l’OTA
-  ArduinoOTA.begin();
-  Serial.println("OTA Ready - Connecté au WiFi");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-}
-
-/************************************
- *  FONCTION : displayInfos
- ************************************/
-void displayInfos(float temp1, float temp2, float tempDifference, bool relayState, int countdown)
-{
-  if(!isCountdownActive) countdown = 0;
-  // Debug sur le port série
-  Serial.printf("Temp S1: %.2f°C | Temp S2: %.2f°C | Diff: %.2f°C\n", temp1, temp2, tempDifference);
-  Serial.printf("Relay State: %s | Countdown: %d s\n", relayState ? "ON" : "OFF", countdown);
-
-// Affichage OLED
-u8g2.clearBuffer();
-u8g2.setFont(u8g2_font_ncenB08_tr);
-
-char buffer[32];
-snprintf(buffer, sizeof(buffer), "S1(bleu): %.2f°C", temp1);
-u8g2.drawStr(0, 10, buffer);
-
-snprintf(buffer, sizeof(buffer), "S2(blanc): %.2f°C", temp2);
-u8g2.drawStr(0, 22, buffer);
-
-snprintf(buffer, sizeof(buffer), "Diff: %.2f°C", tempDifference);
-u8g2.drawStr(0, 34, buffer);
-
-snprintf(buffer, sizeof(buffer), "Relay: %s", relayState ? "ON" : "OFF");
-u8g2.drawStr(0, 46, buffer);
-
-if (isCountdownActive)
-{
-    snprintf(buffer, sizeof(buffer), "Tempo: %d s", countdown);
-    u8g2.drawStr(0, 58, buffer);
-}
-
-// Afficher le mode en haut à droite
-u8g2.setFont(u8g2_font_5x8_tr); // Police pour le mode
-snprintf(buffer, sizeof(buffer), "%s", isAutoMode ?  "AUTO" : "MANUAL");
-u8g2.drawStr(90, 10, buffer); // Position en haut à droite (ajustez les coordonnées si nécessaire)
 
 
 
-  // Point clignotant
-  if (isDotVisible)
-  {
-    u8g2.drawStr(120, 58, ".");
-  }
-  isDotVisible = !isDotVisible;
-
-  u8g2.sendBuffer();
-}
 
 /************************************
  *  LOGIQUE AUTOMATIQUE DE LA POMPE
@@ -160,30 +70,27 @@ void handleAutomaticMode(float tempDifference)
 {
   unsigned long currentTime = millis();
 
-  // Si la temporisation est terminée, on évalue l'état
   if (!isCountdownActive)
   {
-    if (tempDifference >= differentialThreshold && !relayStates[0])
+    // Déclenchement de la pompe si la température dépasse le seuil de démarrage
+    if (tempDifference >= differentialStartThreshold && !relayStates[0])
     {
-      // Activer la pompe
       pcf8574_R1.digitalWrite(RELAY1_PIN, HIGH);
       relayStates[0] = true;
       lastRelayChangeTime = currentTime;
       isCountdownActive = true;
       Serial.println("[AUTO] Pompe activée.");
-
-      delay(1000);
+      delay(1000); // Stabilisation
     }
-    else if (tempDifference < differentialThreshold && relayStates[0])
+    // Arrêt de la pompe si la température redescend sous le seuil d'arrêt
+    else if (tempDifference < differentialStopThreshold && relayStates[0])
     {
-      // Désactiver la pompe
       pcf8574_R1.digitalWrite(RELAY1_PIN, LOW);
       relayStates[0] = false;
       lastRelayChangeTime = currentTime;
       isCountdownActive = true;
       Serial.println("[AUTO] Pompe désactivée.");
-
-      delay(1000);
+      delay(1000); // Stabilisation
     }
   }
 
@@ -194,6 +101,7 @@ void handleAutomaticMode(float tempDifference)
     Serial.println("[AUTO] Temporisation terminée.");
   }
 }
+
 
 /************************************
  *  Fonction d'échanges avec le broker mqtt
@@ -210,71 +118,75 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     Serial.println("[MQTT] Received relay command.");
     Serial.print("[MQTT] Payload: ");
     Serial.println(message);
+
     if (String(topic) == "Chauffage/bouilleur/homeassistant/actuators/0/params/state") {
         rliot["actuators"][0]["params"]["state"] = message;
         relayCommand = message;
-        publishAllData(myTopic, rliot);
+        publishAllData(config.mqttTopic, rliot);
     } else if (String(topic) == "Chauffage/bouilleur/homeassistant/actuators/0/params/mode") {
-        rliot["actuators"][0]["params"]["mode"] = message == "AUTO" ? "AUTO" : "MANUAL"; ;
-        isAutoMode = message == "AUTO" ? true : false;
-        publishAllData(myTopic, rliot);
-    } else if (String(topic) == "Chauffage/bouilleur/homeassistant/actuators/0/params/diff_temp") {
-        rliot["actuators"][0]["params"]["diff_temp"] = message ;
-        differentialThreshold = message.toFloat();
-        publishAllData(myTopic, rliot);
+        rliot["actuators"][0]["params"]["mode"] = message == "AUTO" ? "AUTO" : "MANUAL";
+        isAutoMode = message == "AUTO";
+        publishAllData(config.mqttTopic, rliot);
+    } else if (String(topic) == "Chauffage/bouilleur/homeassistant/actuators/0/params/diff_start") {
+        differentialStartThreshold = message.toFloat();
+        rliot["actuators"][0]["params"]["diff_start"] = differentialStartThreshold;
+        publishAllData(config.mqttTopic, rliot);
+    } else if (String(topic) == "Chauffage/bouilleur/homeassistant/actuators/0/params/diff_stop") {
+        differentialStopThreshold = message.toFloat();
+        rliot["actuators"][0]["params"]["diff_stop"] = differentialStopThreshold;
+        publishAllData(config.mqttTopic, rliot);
+    } else if (String(topic) == "Chauffage/bouilleur/homeassistant/actuators/0/params/relay_delay") {
+        relayDelay = message.toInt() * 1000;
+        rliot["actuators"][0]["params"]["relay_delay"] = relayDelay / 1000;
+        publishAllData(config.mqttTopic, rliot);
     }
 }
 
-void updateMqttBroker(float temp1, float temp2)
-{
 
+void updateMqttBroker(float temp1, float temp2, float tempDifference)
+{
   rliot["id"] = "device_001";
 
   JsonObject header = rliot["header"].to<JsonObject>();
   header["model"] = "kc868-A6";
   header["context"] = "chaufferie";
 
+  // --- Partie extra[] --- là où on met les données supplémentaires qui concernent le système
+
+  JsonObject extra = rliot["extra"].to<JsonObject>();
+  extra["temp_diff"] = tempDifference;
+  extra["IsCountdownActive"] = isCountdownActive;
+  extra["tempo"] = (relayDelay - (millis() - lastRelayChangeTime)) / 1000 * isCountdownActive ;
+  
+
   // --- Partie sensors[] ---
   JsonArray sensors = rliot["sensors"].to<JsonArray>();
-  // Sensor 1: Temperature
   {
     JsonObject sensor1 = sensors.add<JsonObject>();
     sensor1["id"] = "szehdjksdfj6871";
+    // sensor1["status"] = "OK";
     JsonObject sensor1Header = sensor1["header"].to<JsonObject>();
     sensor1Header["name"] = "sonde 1 bleue";
     sensor1Header["model"] = "DS18B20";
-    // On ne reproduit pas ici toutes les pins, doc, etc. par souci de lisibilité
-    // Mais tu peux les ajouter comme dans ton JSON de référence
-
-    sensor1["status"] = "OK"; // ou un statut dynamique
-
     JsonObject sensor1Data = sensor1["data"].to<JsonObject>();
     sensor1Data["value"] = temp1;
-
-    sensor1["error"] = nullptr; // ou un message si tu as un souci
+    sensor1["error"] = nullptr;
   }
 
   {
-    JsonObject sensor1 = sensors.add<JsonObject>();
-    sensor1["id"] = "szehdjksdfj6882";
-    JsonObject sensor1Header = sensor1["header"].to<JsonObject>();
-    sensor1Header["name"] = "sonde 2 blanche";
-    sensor1Header["model"] = "DS18B20";
-    // On ne reproduit pas ici toutes les pins, doc, etc. par souci de lisibilité
-    // Mais tu peux les ajouter comme dans ton JSON de référence
-
-    sensor1["status"] = "OK"; // ou un statut dynamique
-
-    JsonObject sensor1Data = sensor1["data"].to<JsonObject>();
-    sensor1Data["value"] = temp2;
-
-    sensor1["error"] = nullptr; // ou un message si tu as un souci
+    JsonObject sensor2 = sensors.add<JsonObject>();
+    sensor2["id"] = "szehdjksdfj6882";
+    // sensor2["status"] = "OK";
+    JsonObject sensor2Header = sensor2["header"].to<JsonObject>();
+    sensor2Header["name"] = "sonde 2 blanche";
+    sensor2Header["model"] = "DS18B20";
+    JsonObject sensor2Data = sensor2["data"].to<JsonObject>();
+    sensor2Data["value"] = temp2;
+    sensor2["error"] = nullptr;
   }
 
   // --- Partie actuators[] ---
   JsonArray actuators = rliot["actuators"].to<JsonArray>();
-
-  // Actuator 1: Relay (Lighting ou Door, à toi de voir)
   {
     JsonObject actuator1 = actuators.add<JsonObject>();
     actuator1["id"] = "relay_001";
@@ -283,13 +195,17 @@ void updateMqttBroker(float temp1, float temp2)
     actuator1Header["model"] = "Relay 220v";
     JsonObject actuator1data = actuator1["params"].to<JsonObject>();
     actuator1data["state"] = relayStates[0] ? "on" : "off";
-    actuator1data["mode"] = isAutoMode ?  "AUTO" : "MANUAL";
-    actuator1data["diff_temp"] = differentialThreshold;
+    actuator1data["mode"] = isAutoMode ? "AUTO" : "MANUAL";
+    actuator1data["diff_start"] = differentialStartThreshold;
+    actuator1data["diff_stop"] = differentialStopThreshold;
+    actuator1data["relay_delay"] = relayDelay / 1000 ;
   }
 
   // Publier le JSON dans "myTopic"
-  publishAllData(myTopic, rliot);
+  publishAllData(config.mqttTopic, rliot);
 }
+
+
 
 /************************************
  *           SETUP
@@ -298,27 +214,24 @@ void setup()
 {
   Serial.begin(9600);
 
-  // WiFi
-  WiFiManager wifiManager;
-  if (!wifiManager.autoConnect("AutoConnectAP"))
-  {
-    Serial.println("Failed to connect, rebooting...");
-    delay(3000);
-    ESP.restart();
-  }
-  Serial.println("WiFi connected successfully!");
-  Serial.println(WiFi.localIP());
+
+  // Charger la configuration
+  loadConfig();
+  printConfig(config);
+
+  // Initialisation Display OLED
+  displayConnection.begin();
+
+  // Initialiser le WiFi
+  initializeWiFi(config.wifiSSID, config.wifiPassword);
 
   // -- Étape 2 : Initialisation OTA --
   setupOTA();
 
-
-  // -- Étape 3 : Initialisation OLED --
-  u8g2.begin();
-
  // MQTT
   setMqttCallback(mqttCallback); 
-  initMqtt("homeassistant.local", 1883, "romain", "2121Rom1");
+  initMqtt(config.mqttHost, config.mqttPort, config.mqttUser, config.mqttPassword);
+
   // Initialisation des capteurs et relais
   sensors1.begin();
   sensors2.begin();
@@ -336,8 +249,8 @@ void setup()
     pcf8574_R1.digitalWrite(i, HIGH);
   }
 
-  // S'assure que le relais soit sur OFF avant toute logique
-  pcf8574_R1.digitalWrite(RELAY1_PIN, HIGH);
+  // S'assure que le relai 1 soit sur ON pour activer la pompe par défaut (sécurité)
+  pcf8574_R1.digitalWrite(RELAY1_PIN, LOW);
 
   Serial.println("Setup completed!");
  
@@ -359,7 +272,34 @@ void loop()
 
   float temp1 = sensors1.getTempCByIndex(0);
   float temp2 = sensors2.getTempCByIndex(0);
-  float tempDifference = abs(temp1 - temp2);
+
+  if (SIMULATION_MODE == true) {
+      if (SIMULATION_MODE) {
+          Serial.println("[ERREUR] Sonde 1 ou 2 non connectée ! Simulation activée.");
+          
+          // Simulation réaliste avec random walk + bruit progressif
+          static float baseTemp1 = 50.0, baseTemp2 = 35.0;
+          static float noiseFactor = 2.0, amplitude = 10.0;
+
+          float time = millis() / 10000.0; // Temps en secondes
+
+          temp1 = baseTemp1 + sin(time) * amplitude + (random(-noiseFactor, noiseFactor + 1) / 2.0);
+          temp2 = baseTemp2 + sin(time + 1.0) * amplitude + (random(-noiseFactor, noiseFactor + 1) / 2.0);
+
+      } else if (temp1 == DEVICE_DISCONNECTED_C ) {
+          Serial.println("[ERREUR] Sonde 1 déconnectée ! Sécurité activée.");
+          pcf8574_R1.digitalWrite(RELAY1_PIN, HIGH);
+          relayStates[0] = false;
+          return;
+      } else if (temp2 == DEVICE_DISCONNECTED_C ) {
+          Serial.println("[ERREUR] Sonde 2 déconnectée ! Sécurité activée.");
+          pcf8574_R1.digitalWrite(RELAY1_PIN, HIGH);
+          relayStates[0] = false;
+          return; 
+      }
+  }
+
+  float tempDifference = temp1 - temp2;
 
   // S'assure que le relais soit sur OFF avant toute logique
   pcf8574_R1.digitalWrite(RELAY1_PIN, HIGH);
@@ -380,10 +320,23 @@ void loop()
     }
 
   // Mise à jour du broker MQTT
-  updateMqttBroker(temp1, temp2);
+  updateMqttBroker(temp1, temp2, tempDifference);
 
+  int countdown = (relayDelay - (millis() - lastRelayChangeTime)) / 1000 * isCountdownActive;
   // Mise à jour de l'affichage
-  displayInfos(temp1, temp2, tempDifference, relayStates[0], (relayDelay - (millis() - lastRelayChangeTime)) / 1000);
+  displayConnection.displayInfos(
+                      temp1, 
+                      temp2, 
+                      tempDifference, 
+                      relayStates[0], 
+                      countdown,
+                      isCountdownActive, 
+                      isAutoMode);
+  
+    // Debug sur le port série
+    Serial.printf("Temp S1: %.2f°C | Temp S2: %.2f°C | Diff: %.2f°C\n", temp1, temp2, tempDifference);
+    Serial.printf("Relay State: %s | Countdown: %d s\n", relayStates[0] ? "ON" : "OFF", countdown);
+
 
   delay(1000);
 }
