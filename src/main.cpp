@@ -1,13 +1,10 @@
 /************************************
  *           INCLUSIONS
  ************************************/
-
-
 #include <Wire.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include "PCF8574.h"
-
 
 #include "OTA_connection.h"
 #include "wifi_connection.h"
@@ -122,23 +119,23 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (String(topic) == "Chauffage/bouilleur/homeassistant/actuators/0/params/state") {
         rliot["actuators"][0]["params"]["state"] = message;
         relayCommand = message;
-        publishAllData(config.mqttTopic, rliot);
+        publishAllData(config.mqtt.topic, rliot);
     } else if (String(topic) == "Chauffage/bouilleur/homeassistant/actuators/0/params/mode") {
         rliot["actuators"][0]["params"]["mode"] = message == "AUTO" ? "AUTO" : "MANUAL";
         isAutoMode = message == "AUTO";
-        publishAllData(config.mqttTopic, rliot);
+        publishAllData(config.mqtt.topic, rliot);
     } else if (String(topic) == "Chauffage/bouilleur/homeassistant/actuators/0/params/diff_start") {
         differentialStartThreshold = message.toFloat();
         rliot["actuators"][0]["params"]["diff_start"] = differentialStartThreshold;
-        publishAllData(config.mqttTopic, rliot);
+        publishAllData(config.mqtt.topic, rliot);
     } else if (String(topic) == "Chauffage/bouilleur/homeassistant/actuators/0/params/diff_stop") {
         differentialStopThreshold = message.toFloat();
         rliot["actuators"][0]["params"]["diff_stop"] = differentialStopThreshold;
-        publishAllData(config.mqttTopic, rliot);
+        publishAllData(config.mqtt.topic, rliot);
     } else if (String(topic) == "Chauffage/bouilleur/homeassistant/actuators/0/params/relay_delay") {
         relayDelay = message.toInt() * 1000;
         rliot["actuators"][0]["params"]["relay_delay"] = relayDelay / 1000;
-        publishAllData(config.mqttTopic, rliot);
+        publishAllData(config.mqtt.topic, rliot);
     }
 }
 
@@ -202,7 +199,7 @@ void updateMqttBroker(float temp1, float temp2, float tempDifference)
   }
 
   // Publier le JSON dans "myTopic"
-  publishAllData(config.mqttTopic, rliot);
+  publishAllData(config.mqtt.topic, rliot);
 }
 
 
@@ -223,14 +220,14 @@ void setup()
   displayConnection.begin();
 
   // Initialiser le WiFi
-  initializeWiFi(config.wifiSSID, config.wifiPassword);
+  initializeWiFi(config.wifi.ssid, config.wifi.password);
 
   // -- Étape 2 : Initialisation OTA --
   setupOTA();
 
  // MQTT
   setMqttCallback(mqttCallback); 
-  initMqtt(config.mqttHost, config.mqttPort, config.mqttUser, config.mqttPassword);
+  initMqtt(config.mqtt.host, config.mqtt.port, config.mqtt.user, config.mqtt.password);
 
   // Initialisation des capteurs et relais
   sensors1.begin();

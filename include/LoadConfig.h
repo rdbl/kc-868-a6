@@ -3,48 +3,78 @@
 
 #include <ArduinoJson.h>
 
-// Structure pour une entité (device, actuator, sensor)
-struct Entity {
-    String id;
-    String name;
-    String model;
-    String description;
-    int pin ;
-    String room;
-    String datasJson; // Stocke dynamiquement les données sous forme de JSON string
+// Structure pour le header d'une entité
+struct Header {
+  String name;
+  String model;
+  String description;
+  String room;  // Ce champ est utilisé principalement pour le device principal, il pourra être laissé vide pour d'autres entités.
 };
 
-// Définition du nombre max d'actuators et sensors
+// Structure pour la configuration WiFi
+struct WifiConfig {
+  String ssid;
+  String password;
+};
+
+// Structure pour la configuration MQTT
+struct MqttConfig {
+  String host;
+  uint16_t port;
+  String user;
+  String password;
+  String topic;
+};
+
+// Structure pour la configuration OTA
+struct OtaConfig {
+  bool enabled;
+  uint16_t port;
+};
+
+// Structure générique pour une entité (device, actuator, sensor, display)
+struct Entity {
+  String id;
+  Header header;          // Contient name, model, description, et éventuellement room
+  String hardwareJson;    // Stocke les données hardware (ex : pins, bus I2C, etc.) au format JSON
+  String dataJson;        // Stocke les données opérationnelles spécifiques (états, délais, etc.) au format JSON
+};
+
+// Définition du nombre maximum d'entités par catégorie
+#define MAX_DISPLAYS  10
 #define MAX_ACTUATORS 10
-#define MAX_SENSORS 10
+#define MAX_SENSORS   10
 
 // Structure principale pour stocker toute la configuration
 struct Config {
-    // WiFi
-    String wifiSSID;
-    String wifiPassword;
+  bool simulationMode;
 
-    // MQTT
-    String mqttHost;
-    uint16_t mqttPort;
-    String mqttUser;
-    String mqttPassword;
-    String mqttTopic;
+  WifiConfig wifi;
+  MqttConfig mqtt;
+  OtaConfig ota;
+  
+  // Configuration du device principal
+  Entity device;
 
-    // Device
-    Entity device;
-    Entity actuators[MAX_ACTUATORS];
-    int actuatorsCount;
-
-    Entity sensors[MAX_SENSORS];
-    int sensorsCount;
+  // Liste des displays associés au device
+  Entity displays[MAX_DISPLAYS];
+  int displaysCount;
+  
+  // Liste des actuators
+  Entity actuators[MAX_ACTUATORS];
+  int actuatorsCount;
+  
+  // Liste des sensors
+  Entity sensors[MAX_SENSORS];
+  int sensorsCount;
 };
 
-// Déclaration globale pour accéder à la configuration dans `main.cpp`
+// Déclaration globale pour accéder à la configuration dans main.cpp
 extern Config config;
 
-// Fonctions pour charger la configuration
+// Fonctions pour charger et afficher la configuration
+String correctHexInJson(String content);
 void loadConfig();
-void printConfig(Config config);
+void printConfig(const Config &config);
 
 #endif

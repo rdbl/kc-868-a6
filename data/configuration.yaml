@@ -11,6 +11,10 @@ mqtt:
   password: "2121Rom1"
   topic: "Chauffage/bouilleur_dev"
 
+ota:
+  enabled: true
+  port: 3232
+
 device:
   id: "bouilleur_001"
   header:
@@ -18,23 +22,34 @@ device:
     model: "KC-868-A6"
     description: "Poele bouilleur 17kw"
     room: "salon"
+  hardware:
+    i2c:
+      pcf8574:
+        address_hex: "0x24"
+        num_relays: 6
+        R1:
+          pins: 
+            first: 4
+            last: 15
 
   displays:
     - id: "display_001"
       header:
         name: "ecran regulation bouilleur"
         model: "OLED-SSD1306"
-        pin: 4
-      datas:
-        size: 
-         x: 128 
-         y: 64 
+      hardware:
+        pins:
+          COM: 4
+      data:
+        size:
+          x: 128
+          y: 64
     - id: "serial_001"
-      datas:
+      data:
         bauds: 9600
         verbose: DEBUG
     - id: "remotelogs_001"
-      datas:
+      data:
         verbose: WARNING
 
   actuators:
@@ -42,36 +57,45 @@ device:
       header:
         name: "pompe bouilleur"
         model: "FIXED-SPEED-HYDRAULIC-PUMP"
-        pin: 0
         description: "Relay 220v"
-      datas:
+
+      hardware:
+        i2c: "P0"
+
+      data:
         state: "on"
         mode: "MANUAL"
         diff_start: 9.0
         diff_stop: 5.0
-        relay_delay: 180000
+        relay_delay_seconds: 180
 
   sensors:
     - id: "sonde_001"
       header:
         name: "sonde depart bouilleur"
         model: "TEMPERATURE-SENSOR-DS18B20"
-        pin: 33
         description: "DS18B20"
-      datas:
+      hardware:
+
+        pins:
+          COM: 33
+      data:
         temperature: 0.0
         unit: "°C"
         max_temp: 90.0
-        delay: 60000
+        delay_seconds: 60
 
     - id: "sonde_002"
       header:
         name: "sonde retour bouilleur"
         model: "TEMPERATURE-SENSOR-DS18B20"
-        pin: 25
         description: "DS18B20"
-      datas:
+
+      hardware:
+        pins:
+          COM: 25
+      data:
         temperature: 0.0
         unit: "°C"
         max_temp: 90.0
-        delay: 60000
+        delay_seconds: 60
