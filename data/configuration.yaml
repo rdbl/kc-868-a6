@@ -24,6 +24,8 @@ device:
     room: "salon"
   hardware:
     i2c:
+      sda: 26
+      scl: 23
       pcf8574:
         address_hex: "0x24"
         num_relays: 6
