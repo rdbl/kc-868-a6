@@ -5,7 +5,7 @@
 
 
 // Constructeur : n'appelle pas u8g2.begin() immédiatement
-DisplayConnection::DisplayConnection() : u8g2(U8G2_R2, 15, 4, U8X8_PIN_NONE) {
+DisplayConnection::DisplayConnection() : u8g2(U8G2_R0, 15, 4, U8X8_PIN_NONE) {
     // Ne fait rien ici, on initialisera plus tard avec begin()
 }
 
@@ -27,16 +27,20 @@ void DisplayConnection::displayInfos(float temp1, float temp2, float tempDiffere
     
     if (!oled_initialized_) {
         Serial.println("[INFO] OLED not initialized, skipping display update.");
-        return;  // ✅ On sort si l'écran n'a pas été détecté
+        return;
     }
 
+    // Serial.println("[INFO] Updating display...");
+    // Serial.println("[INFO] Temp1: "); Serial.println(temp1);
+    // Serial.println("[INFO] Temp2: "); Serial.println(temp2);
+    // Serial.println("[INFO] Temp diff: "); Serial.println(tempDifference);
+    // Serial.println("[INFO] Relay state: "); Serial.println(relayState);
+    // Serial.println("[INFO] Countdown: "); Serial.println(countdown);
+    // Serial.println("[INFO] Countdown active: "); Serial.println(isCountdownActive);
+    // Serial.println("[INFO] Auto mode: "); Serial.println(isAutoMode);
     
-    if (!isCountdownActive) countdown = 0;
 
-    Serial.printf("Temp S1: %.2f°C | Temp S2: %.2f°C | Diff: %.2f°C\n", temp1, temp2, tempDifference);
-    Serial.printf("Relay State: %s | Countdown: %d s\n", relayState ? "ON" : "OFF", countdown);
-
-    // Affichage OLED
+    // Effacer le tampon
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_ncenB08_tr);
 
@@ -50,18 +54,23 @@ void DisplayConnection::displayInfos(float temp1, float temp2, float tempDiffere
     snprintf(buffer, sizeof(buffer), "Diff: %.2f°C", tempDifference);
     u8g2.drawStr(0, 34, buffer);
 
-    snprintf(buffer, sizeof(buffer), "Relay: %s", relayState ? "ON" : "OFF");
+    snprintf(buffer, sizeof(buffer), "Pump: %s", relayState ? "ON" : "OFF");
     u8g2.drawStr(0, 46, buffer);
 
     if (isCountdownActive) {
         snprintf(buffer, sizeof(buffer), "Tempo: %d s", countdown);
         u8g2.drawStr(0, 58, buffer);
+    }else{
+        u8g2.drawStr(0, 58, "Tempo: -");
     }
 
-    // Afficher le mode en haut à droite
-    u8g2.setFont(u8g2_font_5x8_tr);
+    // Afficher le mode en bas à droite, juste au-dessus du point clignotant
+    // u8g2.setFont(u8g2_font_5x8_tr);
     snprintf(buffer, sizeof(buffer), "%s", isAutoMode ? "AUTO" : "MANUAL");
-    u8g2.drawStr(90, 10, buffer);
+    int text_width = u8g2.getStrWidth(buffer);
+    int x = u8g2.getDisplayWidth() - text_width - 10;  // Position x : aligné à droite
+    int y = 45; // Position y choisie pour être juste au-dessus du point clignotant (affiché à y=58)
+    u8g2.drawStr(x, y, buffer);
 
     // Point clignotant
     if (isDotVisible_) {
@@ -71,3 +80,4 @@ void DisplayConnection::displayInfos(float temp1, float temp2, float tempDiffere
 
     u8g2.sendBuffer();
 }
+

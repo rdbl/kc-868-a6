@@ -1,4 +1,4 @@
-SIMULATION_MODE: false
+SIMULATION_MODE: true
 
 wifi:
   ssid: "Soulagnet_wifi"
@@ -66,9 +66,9 @@ device:
 
       data:
         state: "on"
-        mode: "MANUAL"
-        diff_start: 9.0
-        diff_stop: 5.0
+        mode: "AUTO"
+        diff_start: 6
+        diff_stop: 5
         relay_delay_seconds: 180
 
   sensors:
@@ -95,7 +95,7 @@ device:
 
       hardware:
         pins:
-          COM: 25
+          COM: 32
       data:
         temperature: 0.0
         unit: "°C"

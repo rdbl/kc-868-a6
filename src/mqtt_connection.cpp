@@ -20,8 +20,8 @@ static void (*customMqttCallback)(char* topic, byte* payload, unsigned int lengt
 // Callback par défaut
 // Callback par défaut
 static void defaultMqttCallback(char* topic, byte* payload, unsigned int length) {
-    Serial.println("[MQTT] Default callback invoked.");
-    Serial.print("[MQTT] Topic: ");
+    Serial.println("[MQTT]-[mqqt_connection.cpp]- Default callback invoked.");
+    Serial.print("[MQTT]-[mqqt_connection.cpp]- Topic: ");
     Serial.println(topic);
 
     // Construire le payload en tant que chaîne
@@ -30,7 +30,7 @@ static void defaultMqttCallback(char* topic, byte* payload, unsigned int length)
         message += (char)payload[i];
     }
 
-    Serial.print("[MQTT] Payload: ");
+    Serial.print("[MQTT]-[mqqt_connection.cpp]- Payload: ");
     Serial.println(message);
 }
 
@@ -42,30 +42,43 @@ void setMqttCallback(void (*callback)(char* topic, byte* payload, unsigned int l
 // ===================================
 // Connexion au broker
 // ===================================
+
+static unsigned long lastMqttAttempt = 0;
+static const unsigned long mqttRetryInterval = 5000; // 5 secondes
+
 static void connectMqttBroker(const char* user, const char* pass) {
-    while (!mqttClient.connected()) {
-        Serial.print("[MQTT] Attempting MQTT connection...");
-        String clientId = "ESP32-";
-        clientId += String(random(0xffff), HEX);
+  // Si déjà connecté, ne rien faire
+  if (mqttClient.connected()) return;
+  
+  unsigned long now = millis();
+  if (now - lastMqttAttempt < mqttRetryInterval) {
+    // Pas encore le moment de réessayer
+    return;
+  }
+  
+  lastMqttAttempt = now;
+  
+  Serial.print("[MQTT]-[mqqt_connection.cpp]- Attempting MQTT connection...");
+  String clientId = "ESP32-";
+  clientId += String(random(0xffff), HEX);
 
-        if (mqttClient.connect(clientId.c_str(), user, pass)) {
-            Serial.println(" connected!");
+  if (mqttClient.connect(clientId.c_str(), user, pass)) {
+    Serial.println(" connected!");
 
-            // Ajouter les abonnements nécessaires ici
-            mqttClient.subscribe("Chauffage/bouilleur_dev/homeassistant/actuators/0/params/state");
-            mqttClient.subscribe("Chauffage/bouilleur_dev/homeassistant/actuators/0/params/mode");
-            mqttClient.subscribe("Chauffage/bouilleur_dev/homeassistant/actuators/0/params/diff_start");
-            mqttClient.subscribe("Chauffage/bouilleur_dev/homeassistant/actuators/0/params/diff_stop");
-            mqttClient.subscribe("Chauffage/bouilleur_dev/homeassistant/actuators/0/params/relay_delay");
-            Serial.println("[MQTT] Subscribed to topics.");
-        } else {
-            Serial.print(" failed, rc=");
-            Serial.print(mqttClient.state());
-            Serial.println(" -> retry in 5 seconds");
-            delay(5000);
-        }
-    }
+    // Abonnements
+    mqttClient.subscribe("Chauffage/bouilleur_dev/homeassistant/actuators/0/params/state");
+    mqttClient.subscribe("Chauffage/bouilleur_dev/homeassistant/actuators/0/params/mode");
+    mqttClient.subscribe("Chauffage/bouilleur_dev/homeassistant/actuators/0/params/diff_start");
+    mqttClient.subscribe("Chauffage/bouilleur_dev/homeassistant/actuators/0/params/diff_stop");
+    mqttClient.subscribe("Chauffage/bouilleur_dev/homeassistant/actuators/0/params/relay_delay");
+    Serial.println("[MQTT]-[mqqt_connection.cpp]- Subscribed to topics.");
+  } else {
+    Serial.print("[ERROR]--[mqqt_connection.cpp]- failed, rc=");
+    Serial.print(mqttClient.state());
+    Serial.println(" -> will retry soon.");
+  }
 }
+
 
 // ===================================
 // Fonctions exposées
@@ -88,7 +101,7 @@ void initMqtt(String mqttBroker, int mqttPort, String mqttUser, String mqttPass)
 void handleMqtt() {
   // Si on est déconnecté, on tente de se reconnecter
   if (!mqttClient.connected()) {
-    Serial.println("[MQTT] Disconnected, attempting to reconnect...");
+    Serial.println("[MQTT]-[mqqt_connection.cpp]- Disconnected, attempting to reconnect...");
     connectMqttBroker(g_mqttUser, g_mqttPass);
   }
   mqttClient.loop();
@@ -97,27 +110,27 @@ void handleMqtt() {
 // Validation JSON, unchanged
 static bool validateJsonStructure(const JsonDocument& doc) {
   if (!doc["id"].is<String>()) {
-    Serial.println("[MQTT] Validation error: missing 'id'");
+    Serial.println("[MQTT]-[mqqt_connection.cpp]- Validation error: missing 'id'");
     Serial.println(doc["id"].as<String>());
     return false;
   }
   if (!doc["header"].is<JsonVariantConst>()) {
-    Serial.println("[MQTT] Validation error: missing 'header'");
+    Serial.println("[MQTT]-[mqqt_connection.cpp]- Validation error: missing 'header'");
     Serial.println(doc["header"].as<String>());
     return false;
   }
   if (!doc["extra"].is<JsonVariantConst>()) {
-    Serial.println("[MQTT] Validation error: missing 'extra'");
+    Serial.println("[MQTT]-[mqqt_connection.cpp]- Validation error: missing 'extra'");
     Serial.println(doc["extra"].as<String>());
     return false;
   }
   if (!doc["sensors"].is<JsonVariantConst>()) {
-    Serial.println("[MQTT] Validation error: missing 'sensors'");
+    Serial.println("[MQTT]-[mqqt_connection.cpp]- Validation error: missing 'sensors'");
     Serial.println(doc["sensors"].as<String>());
     return false;
   }
   if (!doc["actuators"].is<JsonVariantConst>()) {
-    Serial.println("[MQTT] Validation error: missing 'actuators'");
+    Serial.println("[MQTT]-[mqqt_connection.cpp]- Validation error: missing 'actuators'");
     Serial.println(doc["actuators"].as<String>());
     return false;
   }
@@ -127,34 +140,34 @@ static bool validateJsonStructure(const JsonDocument& doc) {
 bool publishAllData(String topic, const JsonDocument& doc) {
   // 1) Contrôle de conformité
   if (!validateJsonStructure(doc)) {
-    Serial.println("[MQTT] JSON document is not valid -> not published");
+    Serial.println("[MQTT]-[mqqt_connection.cpp]- JSON document is not valid -> not published");
     return false;
   }
 
   // 2) Vérifier la connexion (optionnel, handleMqtt() va le faire, mais bon)
   if (!mqttClient.connected()) {
-    Serial.println("[MQTT] Client not connected -> not published");
+    Serial.println("[MQTT]-[mqqt_connection.cpp]- Client not connected -> not published");
     return false;
   }
 
   // 3) Sérialiser dans un buffer
   static char buffer[1024];
   size_t len = serializeJson(doc, buffer, sizeof(buffer));
-  Serial.print("[MQTT] Serialized JSON length: ");
+  Serial.print("[MQTT]-[mqqt_connection.cpp]- Serialized JSON length: ");
   Serial.println(len);
 
   if (len >= sizeof(buffer)) {
-    Serial.println("[MQTT] JSON message too large -> not published");
+    Serial.println("[MQTT]-[mqqt_connection.cpp]- JSON message too large -> not published");
     return false;
   }
 
   // 4) Publication
   bool success = mqttClient.publish(topic.c_str(), buffer, len);
   if (success) {
-    Serial.print("[MQTT] Message published successfully to topic ");
+    Serial.print("[MQTT]-[mqqt_connection.cpp]- Message published successfully to topic ");
     Serial.println(topic);
   } else {
-    Serial.println("[MQTT] Failed to publish message");
+    Serial.println("[MQTT]-[mqqt_connection.cpp]- Failed to publish message");
   }
 
   return success;

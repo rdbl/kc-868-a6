@@ -38,7 +38,7 @@ class HardwareManager {
     
     // Fonctions internes pour extraire la configuration et instancier les objets
     void initSensors();
-    void initPCF8574();
+    JsonDocument initPCF8574();
 };
 
 #endif

@@ -17,12 +17,13 @@ DisplayConnection displayConnection;
 
 // Variables de contrôle (pour la logique applicative, à extraire si nécessaire dans des managers spécifiques)
 bool isCountdownActive = false;
-bool isAutoMode = false;
+int countdown = 0;
+bool isAutoMode = true;
 unsigned long lastRelayChangeTime = 0;
 String relayCommand = "on"; // Commande relais initiale
 float differentialStartThreshold = 9.0;
 float differentialStopThreshold = 3.0;
-int relayDelay = 30000;
+int relayDelay = 30000; // 30 secondes
 
 // Variable globale pour la construction du JSON à publier
 JsonDocument rliot;
@@ -37,32 +38,41 @@ HardwareManager hwManager;
  ************************************/
 
 // Logique automatique de la pompe, qui utilisera les objets matériels via HardwareManager
-void handleAutomaticMode(float tempDifference) {
-  unsigned long currentTime = millis();
+void handleAutomaticMode(float differentialStartThreshold , float differentialStopThreshold , bool relayState , float tempDifference , unsigned long currentTime) {
 
-  if (!isCountdownActive) {
     // Exemple : utiliser HardwareManager pour commander le relais
     // On suppose que HardwareManager expose une méthode pour commander le relais de la pompe
-    if (tempDifference >= differentialStartThreshold && !hwManager.getPCF8574()->digitalRead(P0)) {
+
+    // debug messages
+    // Serial.printf("Differential start threshold: %.2f°C\n", differentialStartThreshold);
+    // Serial.printf("Differential stop threshold: %.2f°C\n", differentialStopThreshold);
+    // Serial.printf("Temp diff: %.2f°C\n", tempDifference);
+    // Serial.printf("Relay state: %d\n", relayState);
+    // Serial.printf("Current time: %lu\n", currentTime);
+    // Serial.printf("Last relay change time: %lu\n", lastRelayChangeTime);
+
+
+    if (tempDifference >= differentialStartThreshold && relayState == LOW && isCountdownActive == false) { 
+      // si la différence de température est supérieure au seuil de démarrage et que le relay est LOW 
+      // ( 0 = ouvert , diode allumée ) donc la pompe est ETEINTE parcequ'elle est branché sur le NO
       hwManager.getPCF8574()->digitalWrite( P0 , HIGH);
-      isAutoMode = true;  // Exemple d'utilisation
       lastRelayChangeTime = currentTime;
+      Serial.println("[AUTO]-[main.cpp]- Pompe activée.");
       isCountdownActive = true;
-      Serial.println("[AUTO] Pompe activée.");
       delay(1000);
+
     }
-    else if (tempDifference < differentialStopThreshold && hwManager.getPCF8574()->digitalRead(P0)) {
+    else if (tempDifference < differentialStopThreshold &&  relayState == HIGH && isCountdownActive == false) { 
+      // si la différence de température est inférieure au seuil d'arrêt et que le relay est HIGH 
+      //( 1 = fermé , diode éteinte ) donc la pompe est ALLUMEE parcequ'elle est branché sur le NO
       hwManager.getPCF8574()->digitalWrite( P0 , LOW);
       lastRelayChangeTime = currentTime;
-      isCountdownActive = true;
-      Serial.println("[AUTO] Pompe désactivée.");
+      Serial.println("[AUTO]-[main.cpp]- Pompe désactivée.");
       delay(1000);
+      isCountdownActive = true;
+    }{
+      Serial.println("[AUTO]-[main.cpp]- Aucune action.");
     }
-  }
-  if (isCountdownActive && (currentTime - lastRelayChangeTime >= relayDelay)) {
-    isCountdownActive = false;
-    Serial.println("[AUTO] Temporisation terminée.");
-  }
 }
 
 // Callback MQTT (à refactoriser ultérieurement dans un MQTTManager)
@@ -71,15 +81,28 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   for (unsigned int i = 0; i < length; i++) {
     message += (char)payload[i];
   }
-  Serial.println("[MQTT] Received relay command:");
-  Serial.println(message);
-  
-  // Exemple de mise à jour du JSON à publier
-  if (String(topic) == "Chauffage/bouilleur/homeassistant/actuators/0/params/state") {
-    rliot["actuators"][0]["params"]["state"] = message;
-    relayCommand = message;
-    publishAllData(config.mqtt.topic, rliot);
-  }
+    JsonDocument doc;
+    deserializeJson(doc, message);
+    Serial.println("[MQTT] Received relay command.");
+    Serial.print("[MQTT] Payload: ");
+    Serial.println(message);
+    if (String(topic) == (config.mqtt.topic+"/homeassistant/actuators/0/params/state")) {
+        rliot["actuators"][0]["params"]["state"] = message;
+        relayCommand = message;
+        publishAllData(config.mqtt.topic, rliot);
+    } else if (String(topic) == (config.mqtt.topic+"/homeassistant/actuators/0/params/mode")) {
+        rliot["actuators"][0]["params"]["mode"] = message == "AUTO" ? "AUTO" : "MANUAL"; ;
+        isAutoMode = message == "AUTO" ? true : false;
+        publishAllData(config.mqtt.topic, rliot);
+    } else if (String(topic) == (config.mqtt.topic+"/homeassistant/actuators/0/params/diff_start")) {
+        rliot["actuators"][0]["params"]["diff_start"] = message ;
+        differentialStartThreshold = message.toFloat();
+        publishAllData(config.mqtt.topic, rliot);
+    } else if (String(topic) == (config.mqtt.topic+"/homeassistant/actuators/0/params/diff_stop")) {
+        rliot["actuators"][0]["params"]["diff_stop"] = message ;
+        differentialStopThreshold = message.toFloat();
+        publishAllData(config.mqtt.topic, rliot);
+    }
   // Autres conditions pour mode, diff_start, etc.
 }
 
@@ -162,9 +185,10 @@ void setup() {
 
   // Initialisation MQTT (à refactoriser ultérieurement dans un MQTTManager)
   setMqttCallback(mqttCallback);
+
   initMqtt(config.mqtt.host, config.mqtt.port, config.mqtt.user, config.mqtt.password);
 
-  Serial.println("Setup completed!");
+  Serial.println("[DEBUG]-[main.cpp]- Setup completed!");
 }
 
 /************************************
@@ -174,27 +198,60 @@ void loop() {
   ArduinoOTA.handle();
   handleMqtt();
 
+    // intialisation du compteur de temps
+
+
   // Mise à jour des capteurs via HardwareManager (gestion dynamique des sensors)
   // Par exemple, pour le premier capteur :
   hwManager.getSensor(0)->requestTemperatures();
   hwManager.getSensor(1)->requestTemperatures();
   delay(750);
-
+  // debug messages
+  // Serial.println("requestTemperatures()");
   float temp1 = hwManager.getSensor(0)->getTempCByIndex(0);
   float temp2 = hwManager.getSensor(1)->getTempCByIndex(0);
   float tempDifference = temp1 - temp2;
+  // debug messages
+  Serial.printf("[DEBUG]-[main.cpp]- Temp S1: %.2f°C | Temp S2: %.2f°C | Diff: %.2f°C\n", temp1, temp2, tempDifference);
+  // probleme de lecture des valeurs du relais
+  // bool relayState = hwManager.getPCF8574()->digitalRead(P0);
+  // [ 28461][E][Wire.cpp:513] requestFrom(): i2cRead returned Error 263
+
+
+  bool relayState = hwManager.getPCF8574()->digitalRead(P0);
+
 
   // Logique de contrôle de la pompe (la commande matérielle ici devra être adaptée pour utiliser le HardwareManager)
-  // Par exemple, utiliser pcf8574 via HardwareManager
+  // Par exemple, utiliser pcf8574 via HardwareManager pour commander le relais
+
+  unsigned long currentime = millis()/1000;
+  if(isCountdownActive){
+    Serial.print("relayDelay : ");
+    Serial.print(relayDelay);
+    countdown = relayDelay / 1000 - (currentime - lastRelayChangeTime);
+    Serial.print(" | countdown : ");
+    Serial.print(countdown);
+    Serial.printf("Temporisation en cours: %d s\n", countdown);
+    if (countdown <= 0) {
+      isCountdownActive = false;
+      Serial.println("Temporisation terminée.");
+    }
+  }else{
+    countdown = 0;
+  }
+
   if (isAutoMode) {
-    handleAutomaticMode(tempDifference);
+    Serial.println("[AUTO]-[main.cpp]- Automatic mode...");
+    handleAutomaticMode(differentialStartThreshold, differentialStopThreshold, relayState , tempDifference, currentime );
   }
   else {
     if (relayCommand == "on") {
-      hwManager.getPCF8574()->digitalWrite( P0 , HIGH);
+      Serial.println("comande recu ! Relay ON");
+      hwManager.getPCF8574()->digitalWrite( 0 , HIGH);
       // Mise à jour de l'état
     } else {
-      hwManager.getPCF8574()->digitalWrite( P0 , LOW);
+      Serial.println("comande recu ! Relay OFF");
+      hwManager.getPCF8574()->digitalWrite( 0 , LOW);
     }
   }
 
@@ -202,8 +259,8 @@ void loop() {
 
   // Mise à jour de l'affichage
   // Vous pouvez appeler displayConnection.displayInfos() en lui passant les valeurs mesurées et les états
-
-  // Debug
-  Serial.printf("Temp S1: %.2f°C | Temp S2: %.2f°C | Diff: %.2f°C\n", temp1, temp2, tempDifference);
+  Serial.println("[DISPLAY]-[main.cpp]- Updating display...");
+  displayConnection.displayInfos(temp1, temp2, tempDifference , relayState, countdown, isCountdownActive, isAutoMode);
+  Serial.println("[DISPLAY]-[main.cpp]- Display updated!");
   delay(1000);
 }

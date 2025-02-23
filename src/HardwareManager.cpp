@@ -94,42 +94,46 @@ DallasTemperature* HardwareManager::getSensor(int index) {
 //////////////////////
 // Initialisation du module PCF8574
 //////////////////////
-void HardwareManager::initPCF8574() {
-  Serial.println("HardwareManager::initPCF8574()");
+JsonDocument HardwareManager::initPCF8574() {
   // Extraction de la configuration pour le module PCF8574 depuis config.device.hardwareJson
-  int pcfAddress = 0, pcfR1First = 0, pcfR1Last = 0, i2csda= 0, i2cscl=0;
-  {
-    // Utilisation d'un JsonDocument temporaire pour extraire la valeur de pcfAddress
-    JsonDocument hwDoc;
-    Serial.println("JsonDocument hwDoc alloué");
-    deserializeJson(hwDoc, config.device.hardwareJson);
-    Serial.println("JsonDocument hwDoc rempli");
-    Serial.println("config.device.hardwareJson: ");
-    Serial.println(config.device.hardwareJson);
-    // On suppose que la configuration est structurée comme :
-    // {"i2c": {"pcf8574": {"address": "0x24", "num_relays": 6, "R1": {"pins": {"first": 4, "last": 15}}}}}
-    const char* addrStr = hwDoc["i2c"]["pcf8574"]["address_hex"];
-    Serial.printf("addrStr: %s",addrStr);
-    pcfAddress = (int)strtol(addrStr, NULL, 0);
-    Serial.printf("pcfAddress: %d", pcfAddress);
-    pcfR1First = hwDoc["i2c"]["pcf8574"]["R1"]["pins"]["first"] | 0;
-    pcfR1Last  = hwDoc["i2c"]["pcf8574"]["R1"]["pins"]["last"]  | 0;
-    Serial.printf("pcfR1First: %d", pcfR1First);
-    Serial.printf("pcfR1Last: %d", pcfR1Last);
-    i2csda = hwDoc["i2c"]["sda"] | 0;
-    i2cscl = hwDoc["i2c"]["scl"] | 0;
-  }
+  int pcfAddress = 0, pcfR1First = 0, pcfR1Last = 0, i2csda= 0, i2cscl=0, num_relays=0;
+  
+  // Utilisation d'un JsonDocument temporaire pour extraire la valeur de pcfAddress
+  JsonDocument hwDoc;
+  deserializeJson(hwDoc, config.device.hardwareJson);
+  // On suppose que la configuration est structurée comme :
+  // {"i2c": {"pcf8574": {"address": "0x24", "num_relays": 6, "R1": {"pins": {"first": 4, "last": 15}}}}}
+  const char* addrStr = hwDoc["i2c"]["pcf8574"]["address_hex"];
+  pcfAddress = (int)strtol(addrStr, NULL, 0);
+  pcfR1First = hwDoc["i2c"]["pcf8574"]["R1"]["pins"]["first"] | 0;
+  pcfR1Last  = hwDoc["i2c"]["pcf8574"]["R1"]["pins"]["last"]  | 0;
+  i2csda = hwDoc["i2c"]["sda"] | 0;
+  i2cscl = hwDoc["i2c"]["scl"] | 0;
+  num_relays = hwDoc["i2c"]["pcf8574"]["num_relays"] | 0;
+  Serial.print("num_relays: ");
+  Serial.println(num_relays);
+  
+
   // Instanciation de l'interface I2C (vous pouvez décider de le créer ici ou le déclarer globalement)
-  // debug message
-  Serial.println("HardwareManager::initPCF8574()");
-
   i2cBus = new TwoWire(0);
-  Serial.println("i2cBus alloué");
-  pcf8574_R1 = new PCF8574(i2cBus, pcfAddress, pcfR1First, pcfR1Last);
-  Serial.println("pcf8574_R1 alloué");
-  i2cBus->begin(i2csda, i2cscl);
-}
+  // i2cBus->begin(i2csda, i2cscl);
+  
+  pcf8574_R1 = new PCF8574(i2cBus, pcfAddress, pcfR1First, pcfR1Last);  
+  
+  // Ajoutez ici l'initialisation complète du module PCF8574
+  pcf8574_R1->begin();
+  for(int i = 0; i < num_relays; i++){
+    pcf8574_R1->pinMode(i, OUTPUT);
+    pcf8574_R1->digitalWrite(i, HIGH);
+    hwDoc["actuators"][i]["params"]["relayState"] = "HIGH";
+    hwDoc["actuators"][i]["params"]["IsEnabled"] = false;
+  }
+  
+  hwDoc["actuators"][0]["params"]["IsEnabled"] = true;
+  
+  return hwDoc;
 
+}
 
 
 PCF8574* HardwareManager::getPCF8574() {
