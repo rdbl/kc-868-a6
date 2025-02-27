@@ -12,50 +12,9 @@ DataStore::DataStore() {
     doc.clear(); // S'assurer que le document est vide au démarrage
 }
 
-// --- Implémentation du getter générique ---
-template <typename T>
-T DataStore::get(const String& key, T defaultValue) {
-    // Utiliser directement doc[key].is<JsonObject>() au lieu de containsKey()
-    if (doc[key].is<JsonObject>()) {
-        JsonObject entry = doc[key].as<JsonObject>();
-        // Vérifier si "value" existe (remplace containsKey() par une vérification de nullité)
-        if (!entry["value"].isNull()) {
-            return entry["value"].as<T>();
-        }
-    }
-    return defaultValue;
-}
-
-// --- Implémentation du setter générique ---
-// L'entrée est stockée sous forme d'objet JSON contenant "value", "type" et "tricks"
-template <typename T>
-void DataStore::set(const String& key, T value) {
-    JsonObject entry;
-    // Créer ou récupérer l'objet associé à la clé
-    if (doc[key].is<JsonObject>()) {
-        entry = doc[key].as<JsonObject>();
-    } else {
-        // Remplacer createNestedObject() déprécié par to<JsonObject>()
-        entry = doc[key].to<JsonObject>();
-    }
-
-    // Vérifier si "value" est déjà présente et égale à la nouvelle valeur
-    if (!entry["value"].isNull() && entry["value"] == value) {
-        return;
-    }
-
-    // Mise à jour de l'entrée
-    entry["value"] = value;
-    entry["type"] = getTypeName(value);
-    entry["tricks"] = millis();
-
-    // Exécution des callbacks abonnés (s'ils existent)
-    if (callbacks.find(key) != callbacks.end()) {
-        Serial.printf("[DATASTORE] Changement détecté sur '%s', exécution des callbacks\n", key.c_str());
-        for (auto& cb : callbacks[key]) {
-            cb(entry["value"]);  // Transmission de la nouvelle valeur
-        }
-    }
+// --- Vérification d'existence d'une clé ---
+bool DataStore::exists(const String& key) {
+    return doc[key].is<JsonObject>() && !doc[key]["value"].isNull();
 }
 
 // --- Récupération de l'objet complet associé à une clé ---
@@ -66,21 +25,70 @@ JsonObject DataStore::getObject(const String& key) {
     return JsonObject(); // Retourne un objet JSON vide si la clé n'existe pas
 }
 
-void DataStore::loadFromConfig() {
-    // À implémenter dans une étape ultérieure (chargement de configuration YAML)
-    Serial.println("[INFO] Chargement de la configuration (étape à venir)");
+// --- Méthodes de gestion des types ---
+DataType DataStore::getValueType(const String& key) {
+    if (!exists(key)) {
+        return DataType::UNKNOWN;
+    }
+    
+    JsonObject entry = doc[key].as<JsonObject>();
+    if (!entry["type"].is<String>()) {
+        return DataType::UNKNOWN;
+    }
+    
+    return stringToDataType(entry["type"].as<String>());
 }
 
+bool DataStore::isOfType(const String& key, DataType expectedType) {
+    return getValueType(key) == expectedType;
+}
+
+// --- Méthodes pour les timestamps ---
+unsigned long DataStore::getLastUpdateTick(const String& key) {
+    if (!exists(key)) {
+        return 0;
+    }
+    
+    JsonObject entry = doc[key].as<JsonObject>();
+    if (!entry["tricks"].is<unsigned long>()) {
+        return 0;
+    }
+    
+    return entry["tricks"].as<unsigned long>();
+}
+
+bool DataStore::isStale(const String& key, unsigned long maxAgeTicks) {
+    if (!exists(key)) {
+        return true; // Si la donnée n'existe pas, elle est considérée comme obsolète
+    }
+    
+    unsigned long lastUpdate = getLastUpdateTick(key);
+    unsigned long currentTicks = millis();
+    
+    // Gestion du débordement de millis()
+    if (currentTicks < lastUpdate) {
+        // millis() a débordé et est revenu à 0
+        return (ULONG_MAX - lastUpdate + currentTicks) > maxAgeTicks;
+    }
+    
+    return (currentTicks - lastUpdate) > maxAgeTicks;
+}
+
+// --- Affichage du contenu ---
 void DataStore::printStore() {
     Serial.println("========== [ DataStore Dump ] ==========");
     String output;
-    // filtre les objets pour n'afficher que les valeurs . creer un nouvelle objet json avec uniquement les values
-    // serializeJsonPretty(doc, output);
+    // Filtre les objets pour n'afficher que les valeurs
     for (auto entry : doc.as<JsonObject>()) {
         if (entry.value().is<JsonObject>()) {
             JsonObject obj = entry.value().as<JsonObject>();
             if (obj["value"].is<JsonVariant>()) {
-                output += String(entry.key().c_str()) + ": " + obj["value"].as<String>() + " (" + obj["type"].as<String>() + ")\n";
+                String type = obj["type"].as<String>();
+                unsigned long lastUpdate = obj["tricks"].as<unsigned long>();
+                unsigned long age = millis() - lastUpdate;
+                
+                output += String(entry.key().c_str()) + ": " + obj["value"].as<String>() + 
+                          " (" + type + ") - Dernière mise à jour: " + String(age) + " ms\n";
             }
         }
     }
@@ -88,10 +96,12 @@ void DataStore::printStore() {
     Serial.println("=========================================");
 }
 
+// --- Conversion en JSON ---
 JsonDocument& DataStore::toJson() {
     return doc;
 }
 
+// --- Système d'abonnement ---
 void DataStore::subscribe(const String& key, std::function<void(JsonVariant)> callback) {
     callbacks[key].push_back(callback);
 }
@@ -112,3 +122,22 @@ template void DataStore::set<bool>(const String&, bool);
 template void DataStore::set<String>(const String&, String);
 template void DataStore::set<const char*>(const String&, const char*);
 template void DataStore::set<double>(const String&, double);
+
+// (Pour la fonction template getWithTypeCheck<>)
+template int DataStore::getWithTypeCheck<int>(const String&, int);
+template float DataStore::getWithTypeCheck<float>(const String&, float);
+template bool DataStore::getWithTypeCheck<bool>(const String&, bool);
+template String DataStore::getWithTypeCheck<String>(const String&, String);
+template const char* DataStore::getWithTypeCheck<const char*>(const String&, const char*);
+template double DataStore::getWithTypeCheck<double>(const String&, double);
+
+// (Pour la fonction template isOfType<>)
+template bool DataStore::isOfType<int>(const String&);
+template bool DataStore::isOfType<unsigned int>(const String&);
+template bool DataStore::isOfType<long>(const String&);
+template bool DataStore::isOfType<unsigned long>(const String&);
+template bool DataStore::isOfType<float>(const String&);
+template bool DataStore::isOfType<double>(const String&);
+template bool DataStore::isOfType<bool>(const String&);
+template bool DataStore::isOfType<String>(const String&);
+template bool DataStore::isOfType<const char*>(const String&);

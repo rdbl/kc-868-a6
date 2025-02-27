@@ -56,13 +56,13 @@ void HardwareManager::initialize() {
     sensorTemps[1]->begin();
 
     // ✅ Abonnement à "RelayControl"
-    EventManager::getInstance().subscribe("RelayControl", [this](bool state) {
+    EventManager::getInstance().subscribe<bool>("RelayControl", [this](bool state) {
       Serial.printf("[HARDWARE] Changement état relais : %s\n", state ? "ON" : "OFF");
       pcf8574->digitalWrite(0, state ? HIGH : LOW);
     });
 
     // ✅ Abonnement à "UpdateSensors"
-    EventManager::getInstance().subscribe("UpdateSensors", [this](bool state) {
+    EventManager::getInstance().subscribe("UpdateSensors", [this]() {
       Serial.println("[HARDWARE] Mise à jour des capteurs...");
       updateSensors();
     });
