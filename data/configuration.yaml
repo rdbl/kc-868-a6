@@ -2,13 +2,13 @@ SIMULATION_MODE: true
 
 wifi:
   ssid: "Soulagnet_wifi"
-  password: "piratepasmonwifi"
+  password: "password"
 
 mqtt:
   host: "homeassistant.local"
   port: 1883
   user: "romain"
-  password: "2121Rom1"
+  password: "password"
   topic: "Chauffage/bouilleur_dev"
 
 ota:

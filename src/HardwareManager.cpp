@@ -1,141 +1,91 @@
 #include "HardwareManager.h"
-#include "LoadConfig.h"  // Pour accéder à l'objet global 'config'
-#include <stdlib.h>      // Pour strtol
 
-HardwareManager::HardwareManager() 
-  : sensorOneWires(nullptr), sensorTemps(nullptr), sensorCount(0), i2cBus(nullptr), pcf8574_R1(nullptr) 
-{
+#define SDA_PIN 4   // ✅ Définir correctement la broche SDA
+#define SCL_PIN 15  // ✅ Définir correctement la broche SCL
+
+HardwareManager& HardwareManager::getInstance() {
+    static HardwareManager instance;
+    return instance;
 }
 
-HardwareManager::~HardwareManager() {
-  // Libérer les capteurs
-  for (int i = 0; i < sensorCount; i++) {
-    delete sensorTemps[i];
-    delete sensorOneWires[i];
-  }
-  delete[] sensorTemps;
-  delete[] sensorOneWires;
-  
-  // Libérer le PCF8574 (si nécessaire)
-  delete pcf8574_R1;
-  // Si i2cBus a été alloué dynamiquement, le libérer ici aussi (souvent, on peut l'instancier statiquement)
-  // delete i2cBus;
+HardwareManager::HardwareManager() : i2cBus(0) {  // ✅ Initialise TwoWire sur le bus 0
+    sensorOneWires[0] = nullptr;
+    sensorOneWires[1] = nullptr;
+    sensorTemps[0] = nullptr;
+    sensorTemps[1] = nullptr;
+    pcf8574 = nullptr;
 }
 
-void HardwareManager::scanI2CBus(TwoWire* bus) {
-  Serial.println("Scanning I2C bus...");
-  for (uint8_t addr = 1; addr < 127; addr++) {
-    bus->beginTransmission(addr);
-    if (bus->endTransmission() == 0) {
-      Serial.print("Device found at address 0x");
-      Serial.println(addr, HEX);
+void HardwareManager::initialize() {
+    Serial.println("[HARDWARE] Initialisation en cours...");
+    // 🔹 Initialisation I2C avec les bonnes broches
+    i2cBus.begin(SDA_PIN, SCL_PIN, 100000);
+
+    // 🔹 Initialisation du PCF8574 avec `TwoWire`
+    pcf8574 = new PCF8574(&i2cBus, 0x24);
+    bool connected = pcf8574->begin();
+
+    for(int i = 0; i < 6; i++){
+      pcf8574->pinMode(i, OUTPUT);
+      pcf8574->digitalWrite(i, HIGH);
     }
-  }
-}
 
-void HardwareManager::begin() {
-  // On part du principe que loadConfig() a déjà été exécuté.
-  //debug message   
-  Serial.println("HardwareManager::begin()");
-  initSensors();
-  Serial.println("HardwareManager::initSensors()");
-  initPCF8574();
-  Serial.println("HardwareManager::initPCF8574()");
-  scanI2CBus(i2cBus);
-  // Vous pourrez ici ajouter d'autres initialisations (affichages, actuators, etc.)
-}
-
-//////////////////////
-// Initialisation des capteurs
-//////////////////////
-void HardwareManager::initSensors() {
-  // On suppose que config.sensors contient la configuration de tous les capteurs DS18B20
-  Serial.println("HardwareManager::initSensors()");
-  sensorCount = config.sensorsCount;
-  Serial.print("sensorCount: ");
-  Serial.println(sensorCount);
-  if (sensorCount <= 0) return;
-
-  sensorOneWires = new OneWire*[sensorCount];
-  sensorTemps = new DallasTemperature*[sensorCount];
-
-  //debug message
-    Serial.println("sensorOneWires et sensorTemps alloués");
-
-  // Pour chaque capteur, extraire la pin depuis la configuration
-  for (int i = 0; i < sensorCount; i++) {
-    int pin = 0;
-    {
-      // Utilisation d'un JsonDocument temporaire pour extraire la valeur de pin
-      JsonDocument hwDoc;
-      // On suppose que config.sensors[i].hardwareJson contient un objet JSON (par exemple : {"pins": {"COM": 33}})
-      deserializeJson(hwDoc, config.sensors[i].hardwareJson);
-      pin = hwDoc["pins"]["COM"] | 0;
+    // 🔹 Vérification de la connexion au PCF8574
+    if (pcf8574->begin()) {
+        Serial.println("[HARDWARE] PCF8574 détecté !");
+    } else {
+        Serial.println("[HARDWARE] ⚠️ ERREUR : PCF8574 non détecté !");
+        Serial.println("🔍 Scan I2C en cours...");
+        for (byte addr = 1; addr < 127; addr++) {
+          i2cBus.beginTransmission(addr);
+            if (i2cBus.endTransmission() == 0) {
+                Serial.printf("✅ Périphérique trouvé à l'adresse 0x%02X\n", addr);
+            }else{
+                Serial.printf("❌ Aucun périphérique trouvé à l'adresse 0x%02X\n", addr);
+            }
+        }
     }
-    //debug messages 
-    Serial.print("pin: "); 
-    Serial.println(pin);
 
-    sensorOneWires[i] = new OneWire(pin);
-    sensorTemps[i] = new DallasTemperature(sensorOneWires[i]);
-    sensorTemps[i]->begin();
-    //debug message
-    Serial.println("sensorTemps[i]->begin()");
-  }
+    // 🔹 Initialisation des capteurs DS18B20
+    sensorOneWires[0] = new OneWire(32);
+    sensorOneWires[1] = new OneWire(33);
+    sensorTemps[0] = new DallasTemperature(sensorOneWires[0]);
+    sensorTemps[1] = new DallasTemperature(sensorOneWires[1]);
+
+    sensorTemps[0]->begin();
+    sensorTemps[1]->begin();
+
+    // ✅ Abonnement à "RelayControl"
+    EventManager::getInstance().subscribe("RelayControl", [this](bool state) {
+      Serial.printf("[HARDWARE] Changement état relais : %s\n", state ? "ON" : "OFF");
+      pcf8574->digitalWrite(0, state ? HIGH : LOW);
+    });
+
+    // ✅ Abonnement à "UpdateSensors"
+    EventManager::getInstance().subscribe("UpdateSensors", [this](bool state) {
+      Serial.println("[HARDWARE] Mise à jour des capteurs...");
+      updateSensors();
+    });
+
+
+    Serial.println("[HARDWARE] Initialisation terminée !");
+   
 }
 
-DallasTemperature* HardwareManager::getSensor(int index) {
-  if (index >= 0 && index < sensorCount){
-    return sensorTemps[index];
-    }
-  return nullptr;
+  // ✅ Mise à jour des capteurs et publication via `EventManager`
+void HardwareManager::updateSensors() {
+  sensorTemps[0]->requestTemperatures();
+  sensorTemps[1]->requestTemperatures();
+
+  float temp1 = sensorTemps[0]->getTempCByIndex(0);
+  float temp2 = sensorTemps[1]->getTempCByIndex(0);
+
+  // 🔥 Publier les températures via `EventManager`
+  EventManager::getInstance().publish("TemperatureSensor1", temp1);
+  EventManager::getInstance().publish("TemperatureSensor2", temp2);
 }
 
-//////////////////////
-// Initialisation du module PCF8574
-//////////////////////
-JsonDocument HardwareManager::initPCF8574() {
-  // Extraction de la configuration pour le module PCF8574 depuis config.device.hardwareJson
-  int pcfAddress = 0, pcfR1First = 0, pcfR1Last = 0, i2csda= 0, i2cscl=0, num_relays=0;
-  
-  // Utilisation d'un JsonDocument temporaire pour extraire la valeur de pcfAddress
-  JsonDocument hwDoc;
-  deserializeJson(hwDoc, config.device.hardwareJson);
-  // On suppose que la configuration est structurée comme :
-  // {"i2c": {"pcf8574": {"address": "0x24", "num_relays": 6, "R1": {"pins": {"first": 4, "last": 15}}}}}
-  const char* addrStr = hwDoc["i2c"]["pcf8574"]["address_hex"];
-  pcfAddress = (int)strtol(addrStr, NULL, 0);
-  pcfR1First = hwDoc["i2c"]["pcf8574"]["R1"]["pins"]["first"] | 0;
-  pcfR1Last  = hwDoc["i2c"]["pcf8574"]["R1"]["pins"]["last"]  | 0;
-  i2csda = hwDoc["i2c"]["sda"] | 0;
-  i2cscl = hwDoc["i2c"]["scl"] | 0;
-  num_relays = hwDoc["i2c"]["pcf8574"]["num_relays"] | 0;
-  Serial.print("num_relays: ");
-  Serial.println(num_relays);
-  
-
-  // Instanciation de l'interface I2C (vous pouvez décider de le créer ici ou le déclarer globalement)
-  i2cBus = new TwoWire(0);
-  // i2cBus->begin(i2csda, i2cscl);
-  
-  pcf8574_R1 = new PCF8574(i2cBus, pcfAddress, pcfR1First, pcfR1Last);  
-  
-  // Ajoutez ici l'initialisation complète du module PCF8574
-  pcf8574_R1->begin();
-  for(int i = 0; i < num_relays; i++){
-    pcf8574_R1->pinMode(i, OUTPUT);
-    pcf8574_R1->digitalWrite(i, HIGH);
-    hwDoc["actuators"][i]["params"]["relayState"] = "HIGH";
-    hwDoc["actuators"][i]["params"]["IsEnabled"] = false;
-  }
-  
-  hwDoc["actuators"][0]["params"]["IsEnabled"] = true;
-  
-  return hwDoc;
-
-}
-
-
-PCF8574* HardwareManager::getPCF8574() {
-  return pcf8574_R1;
+void HardwareManager::handleActuators() {
+    bool relayState = pcf8574->digitalRead(0);
+    Serial.printf("[HARDWARE] État actuel du relais (lecture) : %s\n", relayState ? "ON" : "OFF");
 }
