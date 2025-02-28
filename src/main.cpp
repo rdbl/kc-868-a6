@@ -62,6 +62,9 @@ void loop() {
     if (millis() - lastCheck > 10000) {  // Vérification toutes les 10 secondes
         lastCheck = millis();
         
+        // déclanché la mise à jour des capteurs via l'event "UpdateSensors"
+        EventManager::getInstance().publish("UpdateSensors");
+
         DataStore& ds = DataStore::getInstance();
         float temp1_datastore = 0.0f;
         float temp2_datastore = 0.0f;
