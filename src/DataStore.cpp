@@ -1,23 +1,22 @@
 #include "DataStore.h"
-#include <ArduinoYaml.h>
-#include <SPIFFS.h>
 
-// --- Implémentation du Singleton ---
+// Implémentation du Singleton
 DataStore& DataStore::getInstance() {
     static DataStore instance;
     return instance;
 }
 
+// Constructeur privé
 DataStore::DataStore() {
-    doc.clear(); // S'assurer que le document est vide au démarrage
+    // Initialisation des membres si nécessaire
 }
 
-// --- Vérification d'existence d'une clé ---
+// Méthode exists
 bool DataStore::exists(const String& key) {
     return doc[key].is<JsonObject>() && !doc[key]["value"].isNull();
 }
 
-// --- Récupération de l'objet complet associé à une clé ---
+// Récupération de l'objet associé à la clé
 JsonObject DataStore::getObject(const String& key) {
     if (doc[key].is<JsonObject>()) {
         return doc[key].as<JsonObject>();
@@ -25,7 +24,7 @@ JsonObject DataStore::getObject(const String& key) {
     return JsonObject(); // Retourne un objet JSON vide si la clé n'existe pas
 }
 
-// --- Méthodes de gestion des types ---
+// Méthodes de gestion des types
 DataType DataStore::getValueType(const String& key) {
     if (!exists(key)) {
         return DataType::UNKNOWN;
@@ -43,7 +42,7 @@ bool DataStore::isOfType(const String& key, DataType expectedType) {
     return getValueType(key) == expectedType;
 }
 
-// --- Méthodes pour les timestamps ---
+// Méthode pour obtenir le timestamp
 unsigned long DataStore::getLastUpdateTick(const String& key) {
     if (!exists(key)) {
         return 0;
@@ -57,6 +56,7 @@ unsigned long DataStore::getLastUpdateTick(const String& key) {
     return entry["tricks"].as<unsigned long>();
 }
 
+// Vérification d'obsolescence
 bool DataStore::isStale(const String& key, unsigned long maxAgeTicks) {
     if (!exists(key)) {
         return true; // Si la donnée n'existe pas, elle est considérée comme obsolète
@@ -74,10 +74,11 @@ bool DataStore::isStale(const String& key, unsigned long maxAgeTicks) {
     return (currentTicks - lastUpdate) > maxAgeTicks;
 }
 
-// --- Affichage du contenu ---
+// Affichage du contenu du store
 void DataStore::printStore() {
     Serial.println("========== [ DataStore Dump ] ==========");
     String output;
+    
     // Filtre les objets pour n'afficher que les valeurs
     for (auto entry : doc.as<JsonObject>()) {
         if (entry.value().is<JsonObject>()) {
@@ -92,46 +93,48 @@ void DataStore::printStore() {
             }
         }
     }
+    
     Serial.println(output);
     Serial.println("=========================================");
 }
 
-// --- Conversion en JSON ---
+// Conversion en JSON
 JsonDocument& DataStore::toJson() {
     return doc;
 }
 
-// --- Système d'abonnement ---
+// Abonnement à une clé
 void DataStore::subscribe(const String& key, std::function<void(JsonVariant)> callback) {
     callbacks[key].push_back(callback);
 }
 
-// --- Spécialisations explicites pour éviter des erreurs de linkage ---
-// (Pour la fonction template get<>)
-template int DataStore::get<int>(const String&, int);
-template float DataStore::get<float>(const String&, float);
-template bool DataStore::get<bool>(const String&, bool);
-template String DataStore::get<String>(const String&, String);
-template const char* DataStore::get<const char*>(const String&, const char*);
-template double DataStore::get<double>(const String&, double);
+// ===============================================================
+// Instantiations explicites des templates
+// ===============================================================
 
-// (Pour la fonction template set<>)
+// Pour la méthode get avec la nouvelle signature (bool get(const String&, T&))
+template bool DataStore::get<int>(const String&, int&);
+template bool DataStore::get<float>(const String&, float&);
+template bool DataStore::get<bool>(const String&, bool&);
+template bool DataStore::get<String>(const String&, String&);
+template bool DataStore::get<const char*>(const String&, const char*&);
+template bool DataStore::get<double>(const String&, double&);
+template bool DataStore::get<unsigned int>(const String&, unsigned int&);
+template bool DataStore::get<long>(const String&, long&);
+template bool DataStore::get<unsigned long>(const String&, unsigned long&);
+
+// Pour la méthode set (inchangée)
 template void DataStore::set<int>(const String&, int);
 template void DataStore::set<float>(const String&, float);
 template void DataStore::set<bool>(const String&, bool);
 template void DataStore::set<String>(const String&, String);
 template void DataStore::set<const char*>(const String&, const char*);
 template void DataStore::set<double>(const String&, double);
+template void DataStore::set<unsigned int>(const String&, unsigned int);
+template void DataStore::set<long>(const String&, long);
+template void DataStore::set<unsigned long>(const String&, unsigned long);
 
-// (Pour la fonction template getWithTypeCheck<>)
-template int DataStore::getWithTypeCheck<int>(const String&, int);
-template float DataStore::getWithTypeCheck<float>(const String&, float);
-template bool DataStore::getWithTypeCheck<bool>(const String&, bool);
-template String DataStore::getWithTypeCheck<String>(const String&, String);
-template const char* DataStore::getWithTypeCheck<const char*>(const String&, const char*);
-template double DataStore::getWithTypeCheck<double>(const String&, double);
-
-// (Pour la fonction template isOfType<>)
+// Pour la méthode isOfType (si nécessaire)
 template bool DataStore::isOfType<int>(const String&);
 template bool DataStore::isOfType<unsigned int>(const String&);
 template bool DataStore::isOfType<long>(const String&);

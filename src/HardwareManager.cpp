@@ -81,8 +81,8 @@ void HardwareManager::updateSensors() {
   float temp2 = sensorTemps[1]->getTempCByIndex(0);
 
   // 🔥 Publier les températures via `EventManager`
-  EventManager::getInstance().publish("TemperatureSensor1", temp1);
-  EventManager::getInstance().publish("TemperatureSensor2", temp2);
+  EventManager::getInstance().publish("Sensor.0.Temperature", temp1);
+  EventManager::getInstance().publish("Sensor.1.Temperature", temp2);
 }
 
 void HardwareManager::handleActuators() {

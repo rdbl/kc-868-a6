@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 #include <map>
 #include <vector>
+#include <array>
 #include <functional>
 
 // --- Enumération des types de données supportés ---
@@ -61,6 +62,56 @@ template <> inline DataType getDataType<bool>() { return DataType::BOOL; }
 template <> inline DataType getDataType<String>() { return DataType::STRING; }
 template <> inline DataType getDataType<const char*>() { return DataType::CHAR_PTR; }
 
+// --- Classe de journalisation pour le DataStore ---
+class DataStoreLogger {
+private:
+    static const int MAX_ERRORS = 10;
+    std::array<String, MAX_ERRORS> errorLog;
+    int errorIndex = 0;
+    bool hasWrapped = false;
+
+public:
+    void logError(const String& message) {
+        // Horodatage
+        String timestamp = String(millis());
+        String logEntry = "[" + timestamp + "] " + message;
+        
+        // Stocker l'erreur
+        errorLog[errorIndex] = logEntry;
+        
+        // Afficher sur la console série (pour débogage immédiat)
+        Serial.println("ERREUR DATASTORE: " + logEntry);
+        
+        // Mettre à jour l'index pour la prochaine erreur
+        errorIndex = (errorIndex + 1) % MAX_ERRORS;
+        if (errorIndex == 0) {
+            hasWrapped = true;
+        }
+    }
+    
+    void printErrors() {
+        Serial.println("=== JOURNAL DES ERREURS DATASTORE ===");
+        
+        int start = hasWrapped ? errorIndex : 0;
+        int count = hasWrapped ? MAX_ERRORS : errorIndex;
+        
+        for (int i = 0; i < count; i++) {
+            int index = (start + i) % MAX_ERRORS;
+            Serial.println(errorLog[index]);
+        }
+        
+        Serial.println("=====================================");
+    }
+    
+    void clearErrors() {
+        errorIndex = 0;
+        hasWrapped = false;
+        for (int i = 0; i < MAX_ERRORS; i++) {
+            errorLog[i] = "";
+        }
+    }
+};
+
 // --- Déclaration de la classe DataStore ---
 class DataStore {
 public:
@@ -69,19 +120,15 @@ public:
     // Vérifier si une clé existe dans le store
     bool exists(const String& key);
 
-    // Getter générique : retourne la valeur stockée (extraite du champ "value")
+    // MÉTHODE UNIQUE: Méthode get avec vérification d'erreur et indication du succès/échec
     template <typename T>
-    T get(const String& key, T defaultValue = T());
+    bool get(const String& key, T& outValue);
 
-    // Getter sécurisé avec vérification de type
-    template <typename T>
-    T getWithTypeCheck(const String& key, T defaultValue = T());
-
-    // Setter générique : encapsule la donnée dans un objet JSON contenant "value", "type" et "tricks"
+    // Setter générique : encapsule la donnée dans un objet JSON
     template <typename T>
     void set(const String& key, T value);
 
-    // Récupère l'objet complet associé à la clé (contenant "value", "type" et "tricks")
+    // Récupère l'objet complet associé à la clé
     JsonObject getObject(const String& key);
 
     // Méthodes de gestion des types
@@ -96,11 +143,15 @@ public:
     // Méthode pour obtenir le timestamp (ticks) de la dernière mise à jour
     unsigned long getLastUpdateTick(const String& key);
     
-    // Méthode pour vérifier si une donnée est obsolète (plus vieille qu'un certain nombre de ticks)
+    // Méthode pour vérifier si une donnée est obsolète
     bool isStale(const String& key, unsigned long maxAgeTicks);
 
     // Affichage du contenu du DataStore
     void printStore();
+
+    // Gestion des erreurs
+    void printErrors();
+    void clearErrors();
 
     // Conversion en JSON pour MQTT et affichage
     JsonDocument& toJson();
@@ -110,44 +161,42 @@ public:
 
 private:
     DataStore();
-    // Document JSON pour stocker les données (utilisation d'ArduinoJson 7, dynamique)
+    // Document JSON pour stocker les données
     JsonDocument doc;
+    
+    // Logger pour les erreurs
+    DataStoreLogger logger;
 
     // Stockage des callbacks : plusieurs callbacks par clé
     std::map<String, std::vector<std::function<void(JsonVariant)>>> callbacks;
+    
+    // Méthode privée pour journaliser les erreurs
+    void logError(const String& message);
 };
 
 // --- Implémentation des méthodes template (dans le header) ---
 
+// MÉTHODE UNIQUE: Méthode get avec vérification d'erreur
 template <typename T>
-T DataStore::get(const String& key, T defaultValue) {
-    // Utiliser directement doc[key].is<JsonObject>() au lieu de containsKey()
-    if (doc[key].is<JsonObject>()) {
-        JsonObject entry = doc[key].as<JsonObject>();
-        // Vérifier si "value" existe
-        if (!entry["value"].isNull()) {
-            return entry["value"].as<T>();
-        }
-    }
-    return defaultValue;
-}
-
-template <typename T>
-T DataStore::getWithTypeCheck(const String& key, T defaultValue) {
+bool DataStore::get(const String& key, T& outValue) {
+    // Vérifier si la clé existe
     if (!exists(key)) {
-        Serial.printf("[DATASTORE] La clé '%s' n'existe pas, retour de la valeur par défaut\n", key.c_str());
-        return defaultValue;
+        logError("Clé non trouvée: " + key);
+        return false;
     }
     
+    // Vérifier si le type est correct
     if (!isOfType<T>(key)) {
-        Serial.printf("[DATASTORE] Type incorrect pour la clé '%s', attendu: %s, trouvé: %s\n", 
-                     key.c_str(), 
-                     dataTypeToString(getDataType<T>()).c_str(), 
-                     dataTypeToString(getValueType(key)).c_str());
-        return defaultValue;
+        logError("Type incorrect pour la clé: " + key + ", attendu: " + 
+                dataTypeToString(getDataType<T>()) + ", trouvé: " + 
+                dataTypeToString(getValueType(key)));
+        return false;
     }
     
-    return get<T>(key, defaultValue);
+    // Récupérer la valeur
+    JsonObject entry = doc[key].as<JsonObject>();
+    outValue = entry["value"].as<T>();
+    return true;
 }
 
 template <typename T>
@@ -157,7 +206,7 @@ void DataStore::set(const String& key, T value) {
     if (doc[key].is<JsonObject>()) {
         entry = doc[key].as<JsonObject>();
     } else {
-        // Remplacer createNestedObject() déprécié par to<JsonObject>()
+        // Créer un nouvel objet JSON
         entry = doc[key].to<JsonObject>();
     }
 
@@ -168,7 +217,7 @@ void DataStore::set(const String& key, T value) {
 
     // Mise à jour de l'entrée
     entry["value"] = value;
-    entry["type"] = dataTypeToString(getDataType<T>()); // Utiliser la nouvelle méthode
+    entry["type"] = dataTypeToString(getDataType<T>());
     entry["tricks"] = millis();  // Stocke le timestamp en ticks
 
     // Exécution des callbacks abonnés (s'ils existent)
@@ -178,6 +227,20 @@ void DataStore::set(const String& key, T value) {
             cb(entry["value"]);  // Transmission de la nouvelle valeur
         }
     }
+}
+
+// Implémentation de logError
+inline void DataStore::logError(const String& message) {
+    logger.logError(message);
+}
+
+// Implémentation des méthodes de journalisation
+inline void DataStore::printErrors() {
+    logger.printErrors();
+}
+
+inline void DataStore::clearErrors() {
+    logger.clearErrors();
 }
 
 #endif // DATASTORE_H
